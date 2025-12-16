@@ -304,6 +304,8 @@ codeEl.addEventListener("keydown", (e) => {
 document.getElementById('runStats')?.addEventListener('click', () => {
   try {
     const code = document.getElementById('codeStats').value;
+    const numbered = code.split('\n').map((l,i) => `${i+1}: ${l}`).join('\n');
+    console.debug("[smallR] time series code (numbered):\n" + numbered);
     const res = window.smallrEval(code);
     if (res && res.error) {
       throw new Error(res.error);
@@ -395,6 +397,10 @@ document.getElementById('runTimeSeries')?.addEventListener('click', () => {
     if (res.json) {
       const result = JSON.parse(res.json);
       renderTimeSeries(result.original, result.ma, windowSize);
+    }
+    if (res && res.error) {
+      console.error('[smallR] eval error:', res.error);
+      if (res.output) console.error('[smallR] output:\n', res.output);
     }
     
     statusEl.textContent = "Time series analysis complete ✓";
