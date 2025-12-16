@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>smallR Interactive Demos — R-in-the-Browser</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="./wasm_exec.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">r</div>
+      <div>
+        <div class="title">smallR</div>
+        <div class="subtitle">R-like analytics in Go → WASM, rendered with D3</div>
+      </div>
+    </div>
+    <div class="status" id="status">Loading WASM…</div>
+  </header>
+
+  <main>
+    <nav class="tabs">
+      <button class="tab active" data-demo="regression">Linear Regression</button>
+      <button class="tab" data-demo="stats">Statistics & Vectors</button>
+      <button class="tab" data-demo="dataframe">Data Frames</button>
+      <button class="tab" data-demo="timeseries">Time Series</button>
+    </nav>
+
+    <!-- Demo 1: Regression -->
+    <section class="demo-content active" id="demo-regression">
+      <div class="panel">
+        <h2>Interactive regression lab</h2>
+        <p class="lead">
+          Data are generated in the browser. The regression is computed by <b>smallR</b> using R-like code.
+          D3 renders the plot. No server. No install.
+        </p>
+
+      <div class="controls">
+        <label>
+          Points
+          <input id="n" type="range" min="30" max="600" value="200" />
+          <span class="val" id="nVal">200</span>
+        </label>
+
+        <label>
+          Noise
+          <input id="noise" type="range" min="0" max="30" value="10" />
+          <span class="val" id="noiseVal">10</span>
+        </label>
+
+        <label>
+          True slope
+          <input id="trueSlope" type="range" min="-5" max="5" step="0.1" value="1.6" />
+          <span class="val" id="trueSlopeVal">1.6</span>
+        </label>
+
+        <label>
+          True intercept
+          <input id="trueIntercept" type="range" min="-10" max="10" step="0.1" value="0.8" />
+          <span class="val" id="trueInterceptVal">0.8</span>
+        </label>
+
+        <div class="buttons">
+          <button id="regen">Regenerate data</button>
+          <button id="run">Run smallR</button>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="k">Estimated slope</div>
+          <div class="v" id="estSlope">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Estimated intercept</div>
+          <div class="v" id="estIntercept">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">R²</div>
+          <div class="v" id="r2">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">smallR output</div>
+          <pre class="out" id="out"></pre>
+        </div>
+      </div>
+
+        <details open class="codebox">
+          <summary>R-like code executed in the browser</summary>
+          <textarea id="code" spellcheck="false"></textarea>
+          <div class="hint">
+            Tip: edit the code, then click <b>Run smallR</b>. The plot updates immediately.
+          </div>
+        </details>
+      </div>
+
+      <div class="viz">
+        <svg id="chart" width="900" height="560"></svg>
+        <div class="foot">
+          Hover points to see actual vs predicted. The black line is the smallR fit.
+        </div>
+      </div>
+    </section>
+
+    <!-- Demo 2: Statistics & Vectors -->
+    <section class="demo-content" id="demo-stats">
+      <div class="panel">
+        <h2>Statistics & Vector Operations</h2>
+        <p class="lead">
+          Explore R's vector operations, statistical functions, and NA handling.
+        </p>
+
+        <div class="buttons">
+          <button id="runStats">Run Statistics Demo</button>
+        </div>
+
+        <div class="output-grid">
+          <div class="output-box">
+            <h3>Vector Operations</h3>
+            <pre id="statsOut1" class="out"></pre>
+          </div>
+          <div class="output-box">
+            <h3>Statistical Summary</h3>
+            <pre id="statsOut2" class="out"></pre>
+          </div>
+        </div>
+
+        <details open class="codebox">
+          <summary>R code for statistics demo</summary>
+          <textarea id="codeStats" spellcheck="false" readonly># Vector operations and statistics
+x <- c(10, 20, NA, 40, 50, 60)
+print(x)
+print(is.na(x))
+
+# Statistics with NA handling
+mean_val <- mean(x, na.rm=TRUE)
+sum_val <- sum(x, na.rm=TRUE)
+
+# Vector arithmetic
+y <- x * 2
+z <- x + c(1, 2, 3, 4, 5, 6)
+
+list(
+  original = x,
+  doubled = y,
+  sum = sum_val,
+  mean = mean_val,
+  length = length(x)
+)</textarea>
+        </details>
+      </div>
+    </section>
+
+    <!-- Demo 3: Data Frames -->
+    <section class="demo-content" id="demo-dataframe">
+      <div class="panel">
+        <h2>Data Frame Operations</h2>
+        <p class="lead">
+          Create and manipulate data frames with R-like syntax.
+        </p>
+
+        <div class="buttons">
+          <button id="runDataFrame">Run DataFrame Demo</button>
+        </div>
+
+        <div class="output-grid">
+          <div class="output-box">
+            <h3>Data Frame Contents</h3>
+            <pre id="dfOut1" class="out"></pre>
+          </div>
+          <div class="output-box">
+            <h3>Column Operations</h3>
+            <pre id="dfOut2" class="out"></pre>
+          </div>
+        </div>
+
+        <details open class="codebox">
+          <summary>R code for data frame demo</summary>
+          <textarea id="codeDataFrame" spellcheck="false" readonly># Create a data frame
+ages <- c(25, 30, 35, 28, 42)
+scores <- c(85, 92, 78, 88, 95)
+names_vec <- c("Alice", "Bob", "Carol", "Dan", "Eve")
+
+df <- data.frame(
+  name = names_vec,
+  age = ages,
+  score = scores
+)
+
+print(class(df))
+print(nrow(df))
+print(ncol(df))
+
+# Access columns
+print(df$score)
+
+# Add computed column
+df$grade <- df$score > 85
+
+list(
+  dimensions = dim(df),
+  mean_score = mean(df$score),
+  mean_age = mean(df$age)
+)</textarea>
+        </details>
+      </div>
+    </section>
+
+    <!-- Demo 4: Time Series -->
+    <section class="demo-content" id="demo-timeseries">
+      <div class="panel">
+        <h2>Time Series Analysis</h2>
+        <p class="lead">
+          Generate and analyze time series data with moving averages.
+        </p>
+
+        <div class="controls">
+          <label>
+            Data Points
+            <input id="tsPoints" type="range" min="20" max="200" value="50" />
+            <span class="val" id="tsPointsVal">50</span>
+          </label>
+          <label>
+            Window Size
+            <input id="tsWindow" type="range" min="3" max="20" value="5" />
+            <span class="val" id="tsWindowVal">5</span>
+          </label>
+          <div class="buttons">
+            <button id="runTimeSeries">Generate & Analyze</button>
+          </div>
+        </div>
+
+        <div class="viz">
+          <svg id="tsChart" width="900" height="400"></svg>
+        </div>
+
+        <details open class="codebox">
+          <summary>R code for time series analysis</summary>
+          <textarea id="codeTimeSeries" spellcheck="false" readonly># Time series with moving average
+# Data generated in JavaScript
+
+# Calculate moving average
+ma <- function(x, n) {
+  result <- c()
+  len <- length(x)
+  for (i in n:len) {
+    window <- x[(i-n+1):i]
+    result <- c(result, mean(window))
+  }
+  result
+}
+
+moving_avg <- ma(data, window)
+
+list(
+  original = data,
+  ma = moving_avg,
+  mean = mean(data),
+  sd = sd(data)
+)</textarea>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    smallR • Go + WASM • D3.js • Browser-native analytics
+  </footer>
+
+  <script type="module" src="./demo.js"></script>
+</body>
+</html>
