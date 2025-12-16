@@ -1,9 +1,13 @@
 
-# smallR (prototype)
+# smallR
 
 **smallR** is a compact, R-inspired interpreter implemented in **Go**, designed to be compilable to **WebAssembly**.
 
+![](https://simonwaldherr.de/gh-pages/smallR.png)
+
 This repository is a working foundation: lexer → parser → AST → evaluator with environments, closures, lazy arguments (promises), vector semantics, subsetting, and a small base of built-in functions.
+
+[play with it online](https://simonwaldherr.github.io/smallR/)
 
 > Note: Full R compatibility is a very large target. This code focuses on a pragmatic core that you can extend.
 
