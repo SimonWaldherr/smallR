@@ -372,7 +372,7 @@ document.getElementById('runTimeSeries')?.addEventListener('click', () => {
   try {
     updateTSLabels();
     const n = +tsPointsEl.value;
-    const window = +tsWindowEl.value;
+    const windowSize = +tsWindowEl.value;
     
     // Generate synthetic time series data
     const data = [];
@@ -382,9 +382,10 @@ document.getElementById('runTimeSeries')?.addEventListener('click', () => {
       data.push(val);
     }
     
-    const code = document.getElementById('codeTimeSeries').value
+    const codeBase = document.getElementById('codeTimeSeries').value;
+    const code = codeBase
       .replace('# Data generated in JavaScript', `data <- ${toRVec(data)}`)
-      .replace(/window/g, window);
+      .replace('moving_avg <- ma(data, window)', `moving_avg <- ma(data, ${windowSize})`);
     
     const res = window.smallrEval(code);
     if (res && res.error) {
@@ -393,7 +394,7 @@ document.getElementById('runTimeSeries')?.addEventListener('click', () => {
     
     if (res.json) {
       const result = JSON.parse(res.json);
-      renderTimeSeries(result.original, result.ma, window);
+      renderTimeSeries(result.original, result.ma, windowSize);
     }
     
     statusEl.textContent = "Time series analysis complete ✓";
