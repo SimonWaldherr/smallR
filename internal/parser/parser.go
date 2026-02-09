@@ -88,6 +88,7 @@ func (p *Parser) ParseProgram() (*ast.Program, error) {
 const (
 	precLowest = iota
 	precAssign
+	precPipe
 	precOrOr
 	precAndAnd
 	precOr
@@ -108,6 +109,8 @@ func precedence(t token.Type) int {
 	switch t {
 	case token.ASSIGN_LEFT, token.ASSIGN_EQ, token.ASSIGN_SUPER, token.ASSIGN_RIGHT:
 		return precAssign
+	case token.PIPE:
+		return precPipe
 	case token.OROR:
 		return precOrOr
 	case token.ANDAND:
@@ -120,7 +123,7 @@ func precedence(t token.Type) int {
 		return precCompare
 	case token.PLUS, token.MINUS:
 		return precAdd
-	case token.STAR, token.SLASH, token.MOD, token.INTDIV:
+	case token.STAR, token.SLASH, token.MOD, token.INTDIV, token.INOP:
 		return precMul
 	case token.COLON:
 		return precColon
@@ -203,7 +206,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	switch p.cur.Type {
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH, token.CARET, token.COLON,
-		token.MOD, token.INTDIV,
+		token.MOD, token.INTDIV, token.INOP,
 		token.LT, token.LTE, token.GT, token.GTE, token.EQ, token.NEQ,
 		token.AND, token.ANDAND, token.OR, token.OROR:
 		op := p.cur.Type
@@ -218,6 +221,22 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		p.skipSeparatorsCur()
 		right := p.parseExpression(rightPrec)
 		return &ast.BinaryExpr{P: pos, Op: op, Left: left, Right: right}
+
+	case token.PIPE:
+		// |> pipe operator: x |> f becomes f(x), x |> f(y) becomes f(x, y)
+		pos := p.cur.Pos
+		p.next()
+		p.skipSeparatorsCur()
+		right := p.parseExpression(precPipe)
+		// Transform: if right is a CallExpr, prepend left as first arg
+		if call, ok := right.(*ast.CallExpr); ok {
+			newArgs := make([]ast.Arg, 0, 1+len(call.Args))
+			newArgs = append(newArgs, ast.Arg{Value: left})
+			newArgs = append(newArgs, call.Args...)
+			return &ast.CallExpr{P: pos, Fun: call.Fun, Args: newArgs}
+		}
+		// Otherwise, treat right as a function and call it with left
+		return &ast.CallExpr{P: pos, Fun: right, Args: []ast.Arg{{Value: left}}}
 
 	case token.ASSIGN_LEFT, token.ASSIGN_EQ, token.ASSIGN_SUPER, token.ASSIGN_RIGHT:
 		op := p.cur.Type

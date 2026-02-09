@@ -15,6 +15,8 @@ build-wasm:
 copy-wasm-exec:
 	@if [ -f "$(GOROOT)/misc/wasm/wasm_exec.js" ]; then \
 		cp "$(GOROOT)/misc/wasm/wasm_exec.js" demo/wasm_exec.js && echo "Copied wasm_exec.js"; \
+	elif [ -f "$(GOROOT)/lib/wasm/wasm_exec.js" ]; then \
+		cp "$(GOROOT)/lib/wasm/wasm_exec.js" demo/wasm_exec.js && echo "Copied wasm_exec.js from Homebrew path"; \
 	else \
 		echo "wasm_exec.js not found in $(GOROOT)/misc/wasm — skipping copy"; \
 	fi

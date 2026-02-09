@@ -197,6 +197,9 @@ func (l *Lexer) Next() token.Token {
 		if l.match('|') {
 			return token.Token{Type: token.OROR, Lit: "||", Pos: p}
 		}
+		if l.match('>') {
+			return token.Token{Type: token.PIPE, Lit: "|>", Pos: p}
+		}
 		return token.Token{Type: token.OR, Lit: "|", Pos: p}
 	case '%':
 		l.read()
@@ -205,6 +208,13 @@ func (l *Lexer) Next() token.Token {
 		}
 		if l.match('/') && l.match('%') {
 			return token.Token{Type: token.INTDIV, Lit: "%/%", Pos: p}
+		}
+		// %in%
+		if l.pos+3 <= len(l.src) && l.src[l.pos:l.pos+3] == "in%" {
+			l.read() // i
+			l.read() // n
+			l.read() // %
+			return token.Token{Type: token.INOP, Lit: "%in%", Pos: p}
 		}
 		return token.Token{Type: token.ILLEGAL, Lit: "%", Pos: p}
 	}

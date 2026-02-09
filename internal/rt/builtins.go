@@ -2,11 +2,16 @@ package rt
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
 
 func InstallBuiltins(env *Env) {
+	installMathBuiltins(env)
+	installStringBuiltins(env)
+	installUtilBuiltins(env)
+
 	builtins := map[string]*BuiltinFunc{
 		"print":        {FnName: "print", Impl: builtinPrint},
 		"cat":          {FnName: "cat", Impl: builtinCat},
@@ -439,22 +444,11 @@ func builtinSD(ctx *Context, args []ArgValue) (Value, error) {
 	}
 	variance /= float64(n - 1) // sample standard deviation
 
-	return DoubleScalar(sqrt(variance)), nil
+	return DoubleScalar(mathSqrt(variance)), nil
 }
 
-func sqrt(x float64) float64 {
-	// Simple Newton-Raphson
-	if x < 0 {
-		return 0
-	}
-	if x == 0 {
-		return 0
-	}
-	guess := x / 2
-	for i := 0; i < 20; i++ {
-		guess = (guess + x/guess) / 2
-	}
-	return guess
+func mathSqrt(x float64) float64 {
+	return math.Sqrt(x)
 }
 
 func builtinSeq(ctx *Context, args []ArgValue) (Value, error) {

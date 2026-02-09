@@ -925,6 +925,8 @@ func evalBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
 	switch op {
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH, token.CARET, token.MOD, token.INTDIV, token.COLON:
 		return evalNumericBinary(ctx, op, a, b)
+	case token.INOP:
+		return evalInOp(ctx, a, b)
 	case token.LT, token.LTE, token.GT, token.GTE, token.EQ, token.NEQ:
 		return evalCompare(ctx, op, a, b)
 	case token.AND, token.OR:
@@ -932,6 +934,21 @@ func evalBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
 	default:
 		return nil, fmt.Errorf("unsupported binary op %s", op)
 	}
+}
+
+func evalInOp(ctx *Context, a, b Value) (Value, error) {
+	// %in% operator: returns logical vector
+	aStrs := toPlainStrings(a)
+	bStrs := toPlainStrings(b)
+	bSet := map[string]bool{}
+	for _, s := range bStrs {
+		bSet[s] = true
+	}
+	out := make([]LogicalElem, len(aStrs))
+	for i, s := range aStrs {
+		out[i] = LogicalElem{Val: bSet[s]}
+	}
+	return &LogicalVec{Data: out}, nil
 }
 
 func evalNumericBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
