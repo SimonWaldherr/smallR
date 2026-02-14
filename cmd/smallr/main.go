@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"simonwaldherr.de/go/smallr/internal/rt"
+	"simonwaldherr.de/go/smallr"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 	flag.StringVar(&expr, "e", "", "evaluate expression")
 	flag.Parse()
 
-	ctx := rt.NewContext()
+	ctx := smallr.NewContext()
 
 	if expr != "" {
 		res, err := ctx.EvalString(expr)
