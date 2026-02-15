@@ -1,5 +1,8 @@
-
 # smallR
+
+[![Go Version](https://img.shields.io/github/go-mod/go-version/SimonWaldherr/smallR)](https://golang.org)
+[![Release](https://img.shields.io/github/v/release/SimonWaldherr/smallR?label=release)](https://github.com/SimonWaldherr/smallR/releases)
+[![Stars](https://img.shields.io/github/stars/SimonWaldherr/smallR?style=social)](https://github.com/SimonWaldherr/smallR/stargazers)
 
 **smallR** is a compact, R-inspired interpreter implemented in **Go**, designed to be compilable to **WebAssembly**.
 
