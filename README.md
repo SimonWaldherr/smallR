@@ -1,5 +1,6 @@
 # smallR
 
+[![DOI](https://zenodo.org/badge/1116464179.svg)](https://doi.org/10.5281/zenodo.18652409)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/SimonWaldherr/smallR)](https://golang.org)
 [![Release](https://img.shields.io/github/v/release/SimonWaldherr/smallR?label=release)](https://github.com/SimonWaldherr/smallR/releases)
 [![Stars](https://img.shields.io/github/stars/SimonWaldherr/smallR?style=social)](https://github.com/SimonWaldherr/smallR/stargazers)
