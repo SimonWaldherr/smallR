@@ -10,6 +10,19 @@ import (
 	"simonwaldherr.de/go/smallr"
 )
 
+// printResult prints a script's captured stdout (if any), then its value —
+// except in the non-interactive (-e / file) modes, where the value is only
+// shown when nothing was already printed (mirroring plain Rscript behavior).
+func printResult(res smallr.EvalResult, alwaysPrintValue bool) {
+	hasOutput := strings.TrimSpace(res.Output) != ""
+	if hasOutput {
+		fmt.Print(res.Output)
+	}
+	if !hasOutput || alwaysPrintValue {
+		fmt.Println(res.Value.String())
+	}
+}
+
 func main() {
 	var expr string
 	flag.StringVar(&expr, "e", "", "evaluate expression")
@@ -23,11 +36,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
-		if strings.TrimSpace(res.Output) != "" {
-			fmt.Print(res.Output)
-		} else {
-			fmt.Println(res.Value.String())
-		}
+		printResult(res, false)
 		return
 	}
 
@@ -43,12 +52,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
-		if strings.TrimSpace(res.Output) != "" {
-			fmt.Print(res.Output)
-		} else {
-			// print last value only if there was no printed output
-			fmt.Println(res.Value.String())
-		}
+		printResult(res, false)
 		return
 	}
 
@@ -78,10 +82,7 @@ func main() {
 			buf.Reset()
 			continue
 		}
-		if strings.TrimSpace(res.Output) != "" {
-			fmt.Print(res.Output)
-		}
-		fmt.Println(res.Value.String())
+		printResult(res, true)
 		buf.Reset()
 	}
 }

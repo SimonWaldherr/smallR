@@ -2,6 +2,7 @@ package rt
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -66,14 +67,11 @@ func installUtilBuiltins(env *Env) {
 		"Sys.time":    {FnName: "Sys.time", Impl: builtinSysTime},
 
 		// Numeric utilities
-		"is.na":    nil, // already installed in builtins.go
 		"which.na": {FnName: "which.na", Impl: builtinWhichNA},
 		"tabulate": {FnName: "tabulate", Impl: builtinTabulate},
 	}
 	for name, fn := range builtins {
-		if fn != nil {
-			env.SetLocal(name, fn)
-		}
+		env.SetLocal(name, fn)
 	}
 }
 
@@ -103,9 +101,11 @@ func builtinWhich(ctx *Context, args []ArgValue) (Value, error) {
 	return &IntVec{Data: out}, nil
 }
 
-func builtinWhichMin(ctx *Context, args []ArgValue) (Value, error) {
+// whichExtreme implements which.min/which.max: the 1-based index of the
+// first element for which better(candidate, current-best) is true.
+func whichExtreme(ctx *Context, args []ArgValue, name string, better func(candidate, best float64) bool) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("which.min(x) expects 1 argument")
+		return nil, fmt.Errorf("%s(x) expects 1 argument", name)
 	}
 	v, err := Force(ctx, args[0].Val)
 	if err != nil {
@@ -115,60 +115,35 @@ func builtinWhichMin(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	minIdx := -1
-	var minVal float64
+	bestIdx := -1
+	var best float64
 	for i, e := range dv {
 		if e.NA {
 			continue
 		}
-		if minIdx < 0 || e.Val < minVal {
-			minVal = e.Val
-			minIdx = i
+		if bestIdx < 0 || better(e.Val, best) {
+			best = e.Val
+			bestIdx = i
 		}
 	}
-	if minIdx < 0 {
+	if bestIdx < 0 {
 		return &IntVec{Data: nil}, nil
 	}
-	return IntScalar(int64(minIdx + 1)), nil
+	return IntScalar(int64(bestIdx + 1)), nil
+}
+
+func builtinWhichMin(ctx *Context, args []ArgValue) (Value, error) {
+	return whichExtreme(ctx, args, "which.min", func(candidate, best float64) bool { return candidate < best })
 }
 
 func builtinWhichMax(ctx *Context, args []ArgValue) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("which.max(x) expects 1 argument")
-	}
-	v, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	dv, err := asDoubleVec(ctx, v)
-	if err != nil {
-		return nil, err
-	}
-	maxIdx := -1
-	var maxVal float64
-	for i, e := range dv {
-		if e.NA {
-			continue
-		}
-		if maxIdx < 0 || e.Val > maxVal {
-			maxVal = e.Val
-			maxIdx = i
-		}
-	}
-	if maxIdx < 0 {
-		return &IntVec{Data: nil}, nil
-	}
-	return IntScalar(int64(maxIdx + 1)), nil
+	return whichExtreme(ctx, args, "which.max", func(candidate, best float64) bool { return candidate > best })
 }
 
 func builtinAny(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	if v, ok := getNamed(args, "na.rm"); ok {
-		fv, _ := Force(ctx, v)
-		b, na, _ := asLogicalScalar(ctx, fv)
-		if !na {
-			naRm = b
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	anyNA := false
 	for _, a := range args {
@@ -202,13 +177,9 @@ func builtinAny(ctx *Context, args []ArgValue) (Value, error) {
 }
 
 func builtinAll(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	if v, ok := getNamed(args, "na.rm"); ok {
-		fv, _ := Force(ctx, v)
-		b, na, _ := asLogicalScalar(ctx, fv)
-		if !na {
-			naRm = b
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	anyNA := false
 	for _, a := range args {
@@ -616,6 +587,63 @@ func builtinSeqAlong(ctx *Context, args []ArgValue) (Value, error) {
 	return &IntVec{Data: out}, nil
 }
 
+// isNumericType reports whether setdiff/intersect/union should operate on
+// the double/integer fast path rather than falling back to string keys.
+func isNumericType(t string) bool {
+	return t == "double" || t == "integer"
+}
+
+// filterBySetF keeps the unique, non-NA elements of xs for which keep(present
+// in ySet) is true, preserving first-occurrence order. Shared by the numeric
+// path of setdiff (keep = !present) and intersect (keep = present).
+func filterBySetF(xs []FloatElem, ySet map[float64]bool, keep func(inY bool) bool) []FloatElem {
+	var out []FloatElem
+	seen := map[float64]bool{}
+	for _, e := range xs {
+		if e.NA || seen[e.Val] || !keep(ySet[e.Val]) {
+			continue
+		}
+		seen[e.Val] = true
+		out = append(out, e)
+	}
+	return out
+}
+
+func toFloatSet(dv []FloatElem) map[float64]bool {
+	set := make(map[float64]bool, len(dv))
+	for _, e := range dv {
+		if !e.NA {
+			set[e.Val] = true
+		}
+	}
+	return set
+}
+
+// filterBySetS is the string-keyed counterpart of filterBySetF.
+func filterBySetS(xs []string, ySet map[string]bool, keep func(inY bool) bool) []StringElem {
+	var out []StringElem
+	seen := map[string]bool{}
+	for _, s := range xs {
+		if seen[s] || !keep(ySet[s]) {
+			continue
+		}
+		seen[s] = true
+		out = append(out, StringElem{Val: s})
+	}
+	return out
+}
+
+func toStringSet(strs []string) map[string]bool {
+	set := make(map[string]bool, len(strs))
+	for _, s := range strs {
+		set[s] = true
+	}
+	return set
+}
+
+func notIn(inY bool) bool { return !inY }
+func isIn(inY bool) bool  { return inY }
+
 func builtinSetdiff(ctx *Context, args []ArgValue) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("setdiff(x, y) expects 2 arguments")
@@ -628,47 +656,14 @@ func builtinSetdiff(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	xStrs := toPlainStrings(x)
-	yStrs := toPlainStrings(y)
-	ySet := map[string]bool{}
-	for _, s := range yStrs {
-		ySet[s] = true
-	}
-	var out []StringElem
-	seen := map[string]bool{}
-	for _, s := range xStrs {
-		if !ySet[s] && !seen[s] {
-			seen[s] = true
-			out = append(out, StringElem{Val: s})
-		}
-	}
-	if out == nil {
-		out = []StringElem{}
-	}
-	// Try to return as numeric if input was numeric
-	if x.Type() == "double" || x.Type() == "integer" {
+	if isNumericType(x.Type()) {
 		xDv, _ := asDoubleVec(ctx, x)
 		yDv, _ := asDoubleVec(ctx, y)
-		ySetF := map[float64]bool{}
-		for _, e := range yDv {
-			if !e.NA {
-				ySetF[e.Val] = true
-			}
-		}
-		var outF []FloatElem
-		seenF := map[float64]bool{}
-		for _, e := range xDv {
-			if e.NA {
-				continue
-			}
-			if !ySetF[e.Val] && !seenF[e.Val] {
-				seenF[e.Val] = true
-				outF = append(outF, e)
-			}
-		}
-		return &DoubleVec{Data: outF}, nil
+		return &DoubleVec{Data: filterBySetF(xDv, toFloatSet(yDv), notIn)}, nil
 	}
-	return &CharVec{Data: out}, nil
+	xStrs := toPlainStrings(x)
+	yStrs := toPlainStrings(y)
+	return &CharVec{Data: filterBySetS(xStrs, toStringSet(yStrs), notIn)}, nil
 }
 
 func builtinIntersect(ctx *Context, args []ArgValue) (Value, error) {
@@ -683,43 +678,14 @@ func builtinIntersect(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if x.Type() == "double" || x.Type() == "integer" {
+	if isNumericType(x.Type()) {
 		xDv, _ := asDoubleVec(ctx, x)
 		yDv, _ := asDoubleVec(ctx, y)
-		ySet := map[float64]bool{}
-		for _, e := range yDv {
-			if !e.NA {
-				ySet[e.Val] = true
-			}
-		}
-		var out []FloatElem
-		seen := map[float64]bool{}
-		for _, e := range xDv {
-			if e.NA {
-				continue
-			}
-			if ySet[e.Val] && !seen[e.Val] {
-				seen[e.Val] = true
-				out = append(out, e)
-			}
-		}
-		return &DoubleVec{Data: out}, nil
+		return &DoubleVec{Data: filterBySetF(xDv, toFloatSet(yDv), isIn)}, nil
 	}
 	xStrs := toPlainStrings(x)
 	yStrs := toPlainStrings(y)
-	ySet := map[string]bool{}
-	for _, s := range yStrs {
-		ySet[s] = true
-	}
-	var out []StringElem
-	seen := map[string]bool{}
-	for _, s := range xStrs {
-		if ySet[s] && !seen[s] {
-			seen[s] = true
-			out = append(out, StringElem{Val: s})
-		}
-	}
-	return &CharVec{Data: out}, nil
+	return &CharVec{Data: filterBySetS(xStrs, toStringSet(yStrs), isIn)}, nil
 }
 
 func builtinUnion(ctx *Context, args []ArgValue) (Value, error) {
@@ -734,46 +700,44 @@ func builtinUnion(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if x.Type() == "double" || x.Type() == "integer" {
+	if isNumericType(x.Type()) {
 		xDv, _ := asDoubleVec(ctx, x)
 		yDv, _ := asDoubleVec(ctx, y)
 		seen := map[float64]bool{}
-		var out []FloatElem
+		out := make([]FloatElem, 0, len(xDv)+len(yDv))
 		for _, e := range xDv {
-			if e.NA {
+			if e.NA || seen[e.Val] {
 				continue
 			}
-			if !seen[e.Val] {
-				seen[e.Val] = true
-				out = append(out, e)
-			}
+			seen[e.Val] = true
+			out = append(out, e)
 		}
 		for _, e := range yDv {
-			if e.NA {
+			if e.NA || seen[e.Val] {
 				continue
 			}
-			if !seen[e.Val] {
-				seen[e.Val] = true
-				out = append(out, e)
-			}
+			seen[e.Val] = true
+			out = append(out, e)
 		}
 		return &DoubleVec{Data: out}, nil
 	}
 	xStrs := toPlainStrings(x)
 	yStrs := toPlainStrings(y)
 	seen := map[string]bool{}
-	var out []StringElem
+	out := make([]StringElem, 0, len(xStrs)+len(yStrs))
 	for _, s := range xStrs {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, StringElem{Val: s})
+		if seen[s] {
+			continue
 		}
+		seen[s] = true
+		out = append(out, StringElem{Val: s})
 	}
 	for _, s := range yStrs {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, StringElem{Val: s})
+		if seen[s] {
+			continue
 		}
+		seen[s] = true
+		out = append(out, StringElem{Val: s})
 	}
 	return &CharVec{Data: out}, nil
 }
@@ -849,9 +813,11 @@ func builtinIsFunction(ctx *Context, args []ArgValue) (Value, error) {
 	})
 }
 
-func builtinIsFinite(ctx *Context, args []ArgValue) (Value, error) {
+// vecBoolUnary is the LogicalVec counterpart to vecMathUnary, shared by
+// is.finite/is.nan/is.infinite: NA always maps to FALSE, otherwise fn decides.
+func vecBoolUnary(ctx *Context, args []ArgValue, name string, fn func(float64) bool) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("is.finite(x) expects 1 argument")
+		return nil, fmt.Errorf("%s(x) expects 1 argument", name)
 	}
 	v, err := Force(ctx, args[0].Val)
 	if err != nil {
@@ -866,56 +832,22 @@ func builtinIsFinite(ctx *Context, args []ArgValue) (Value, error) {
 		if e.NA {
 			out[i] = LogicalElem{Val: false}
 		} else {
-			out[i] = LogicalElem{Val: !isInfOrNaN(e.Val)}
+			out[i] = LogicalElem{Val: fn(e.Val)}
 		}
 	}
 	return &LogicalVec{Data: out}, nil
+}
+
+func builtinIsFinite(ctx *Context, args []ArgValue) (Value, error) {
+	return vecBoolUnary(ctx, args, "is.finite", func(v float64) bool { return !math.IsInf(v, 0) && !math.IsNaN(v) })
 }
 
 func builtinIsNaN(ctx *Context, args []ArgValue) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("is.nan(x) expects 1 argument")
-	}
-	v, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	dv, err := asDoubleVec(ctx, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]LogicalElem, len(dv))
-	for i, e := range dv {
-		if e.NA {
-			out[i] = LogicalElem{Val: false}
-		} else {
-			out[i] = LogicalElem{Val: isNaN(e.Val)}
-		}
-	}
-	return &LogicalVec{Data: out}, nil
+	return vecBoolUnary(ctx, args, "is.nan", math.IsNaN)
 }
 
 func builtinIsInfinite(ctx *Context, args []ArgValue) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("is.infinite(x) expects 1 argument")
-	}
-	v, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	dv, err := asDoubleVec(ctx, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]LogicalElem, len(dv))
-	for i, e := range dv {
-		if e.NA {
-			out[i] = LogicalElem{Val: false}
-		} else {
-			out[i] = LogicalElem{Val: isInf(e.Val)}
-		}
-	}
-	return &LogicalVec{Data: out}, nil
+	return vecBoolUnary(ctx, args, "is.infinite", func(v float64) bool { return math.IsInf(v, 0) })
 }
 
 func builtinIsDataFrame(ctx *Context, args []ArgValue) (Value, error) {
@@ -1530,18 +1462,4 @@ func builtinTabulate(ctx *Context, args []ArgValue) (Value, error) {
 		out[e.Val-1].Val++
 	}
 	return &IntVec{Data: out}, nil
-}
-
-// --- Helpers ---
-
-func isInfOrNaN(v float64) bool {
-	return isInf(v) || isNaN(v)
-}
-
-func isInf(v float64) bool {
-	return v > 1.7976931348623157e+308 || v < -1.7976931348623157e+308
-}
-
-func isNaN(v float64) bool {
-	return v != v
 }

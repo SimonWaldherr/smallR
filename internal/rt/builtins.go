@@ -69,6 +69,53 @@ func getNamed(args []ArgValue, name string) (Value, bool) {
 	return nil, false
 }
 
+// naRmArg extracts the na.rm=  named argument shared by sum/mean/sd/max/min/
+// range/prod/any/all. Mirrors R's default of FALSE, treating a NA value for
+// na.rm itself as FALSE.
+func naRmArg(ctx *Context, args []ArgValue) (bool, error) {
+	naRm := false
+	for _, a := range args {
+		if a.Name != "na.rm" {
+			continue
+		}
+		v, err := Force(ctx, a.Val)
+		if err != nil {
+			return false, err
+		}
+		b, na, err := asLogicalScalar(ctx, v)
+		if err != nil {
+			return false, err
+		}
+		if na {
+			naRm = false
+		} else {
+			naRm = b
+		}
+	}
+	return naRm, nil
+}
+
+// parseHeadTailN extracts the optional second positional argument (n=6) shared
+// by head()/tail().
+func parseHeadTailN(ctx *Context, args []ArgValue) (int, error) {
+	n := 6
+	if len(args) < 2 {
+		return n, nil
+	}
+	nv, err := Force(ctx, args[1].Val)
+	if err != nil {
+		return 0, err
+	}
+	fe, err := asFloatElem(ctx, nv)
+	if err != nil {
+		return 0, err
+	}
+	if !fe.NA {
+		n = int(fe.Val)
+	}
+	return n, nil
+}
+
 func builtinPrint(ctx *Context, args []ArgValue) (Value, error) {
 	fargs, err := forceArgs(ctx, args)
 	if err != nil {
@@ -285,24 +332,9 @@ func builtinLength(ctx *Context, args []ArgValue) (Value, error) {
 
 func builtinSum(ctx *Context, args []ArgValue) (Value, error) {
 	// sum(..., na.rm=FALSE)
-	naRm := false
-	// Do not force until we parse na.rm
-	for _, a := range args {
-		if a.Name == "na.rm" {
-			v, err := Force(ctx, a.Val)
-			if err != nil {
-				return nil, err
-			}
-			b, na, err := asLogicalScalar(ctx, v)
-			if err != nil {
-				return nil, err
-			}
-			if na {
-				naRm = false
-			} else {
-				naRm = b
-			}
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	var sum float64
 	anyNA := false
@@ -336,23 +368,9 @@ func builtinSum(ctx *Context, args []ArgValue) (Value, error) {
 }
 
 func builtinMean(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	for _, a := range args {
-		if a.Name == "na.rm" {
-			v, err := Force(ctx, a.Val)
-			if err != nil {
-				return nil, err
-			}
-			b, na, err := asLogicalScalar(ctx, v)
-			if err != nil {
-				return nil, err
-			}
-			if na {
-				naRm = false
-			} else {
-				naRm = b
-			}
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	if len(args) == 0 {
 		return nil, fmt.Errorf("mean() expects at least 1 argument")
@@ -385,23 +403,9 @@ func builtinMean(ctx *Context, args []ArgValue) (Value, error) {
 }
 
 func builtinSD(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	for _, a := range args {
-		if a.Name == "na.rm" {
-			v, err := Force(ctx, a.Val)
-			if err != nil {
-				return nil, err
-			}
-			b, na, err := asLogicalScalar(ctx, v)
-			if err != nil {
-				return nil, err
-			}
-			if na {
-				naRm = false
-			} else {
-				naRm = b
-			}
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	if len(args) == 0 {
 		return nil, fmt.Errorf("sd() expects at least 1 argument")
@@ -444,11 +448,7 @@ func builtinSD(ctx *Context, args []ArgValue) (Value, error) {
 	}
 	variance /= float64(n - 1) // sample standard deviation
 
-	return DoubleScalar(mathSqrt(variance)), nil
-}
-
-func mathSqrt(x float64) float64 {
-	return math.Sqrt(x)
+	return DoubleScalar(math.Sqrt(variance)), nil
 }
 
 func builtinSeq(ctx *Context, args []ArgValue) (Value, error) {
@@ -1040,19 +1040,9 @@ func builtinHead(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := 6
-	if len(args) >= 2 {
-		nv, err := Force(ctx, args[1].Val)
-		if err != nil {
-			return nil, err
-		}
-		fe, err := asFloatElem(ctx, nv)
-		if err != nil {
-			return nil, err
-		}
-		if !fe.NA {
-			n = int(fe.Val)
-		}
+	n, err := parseHeadTailN(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	if n < 0 {
 		n = 0
@@ -1083,19 +1073,9 @@ func builtinTail(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := 6
-	if len(args) >= 2 {
-		nv, err := Force(ctx, args[1].Val)
-		if err != nil {
-			return nil, err
-		}
-		fe, err := asFloatElem(ctx, nv)
-		if err != nil {
-			return nil, err
-		}
-		if !fe.NA {
-			n = int(fe.Val)
-		}
+	n, err := parseHeadTailN(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	if n < 0 {
 		n = 0
@@ -1150,9 +1130,6 @@ func dfHeadTail(ctx *Context, x Value, n int, head bool) (Value, error) {
 		newCols[i] = v
 	}
 	out := &ListVec{Data: newCols}
-	// copy attrs (names/class/row.names)
-	for k, a := range lv.Attrs() {
-		out.SetAttr(k, a)
-	}
+	copyAttrs(out, lv)
 	return out, nil
 }

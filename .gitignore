@@ -1,2 +1,6 @@
 smallr.wasm
 wasm_exec.js
+
+.DS_Store
+*.bak
+Neuer Ordner*/

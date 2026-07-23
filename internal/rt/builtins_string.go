@@ -446,10 +446,11 @@ func builtinGrepl(ctx *Context, args []ArgValue) (Value, error) {
 	return &LogicalVec{Data: out}, nil
 }
 
-func builtinSub(ctx *Context, args []ArgValue) (Value, error) {
-	// sub(pattern, replacement, x) — replace first occurrence
+// replaceImpl implements sub()/gsub(): sub replaces only the first occurrence
+// (all=false), gsub replaces every occurrence (all=true).
+func replaceImpl(ctx *Context, args []ArgValue, name string, all bool) (Value, error) {
 	if len(args) < 3 {
-		return nil, fmt.Errorf("sub(pattern, replacement, x) expects 3 arguments")
+		return nil, fmt.Errorf("%s(pattern, replacement, x) expects 3 arguments", name)
 	}
 	patV, err := Force(ctx, args[0].Val)
 	if err != nil {
@@ -466,7 +467,7 @@ func builtinSub(ctx *Context, args []ArgValue) (Value, error) {
 	patS := toPlainStrings(patV)
 	replS := toPlainStrings(replV)
 	if len(patS) == 0 || len(replS) == 0 {
-		return nil, fmt.Errorf("sub: invalid arguments")
+		return nil, fmt.Errorf("%s: invalid arguments", name)
 	}
 	pattern := patS[0]
 	replacement := replS[0]
@@ -475,55 +476,27 @@ func builtinSub(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	count := 1
+	if all {
+		count = -1
+	}
 	out := make([]StringElem, len(cv))
 	for i, e := range cv {
 		if e.NA {
 			out[i] = StringElem{NA: true}
 		} else {
-			out[i] = StringElem{Val: strings.Replace(e.Val, pattern, replacement, 1)}
+			out[i] = StringElem{Val: strings.Replace(e.Val, pattern, replacement, count)}
 		}
 	}
 	return &CharVec{Data: out}, nil
 }
 
-func builtinGsub(ctx *Context, args []ArgValue) (Value, error) {
-	// gsub(pattern, replacement, x) — replace all occurrences
-	if len(args) < 3 {
-		return nil, fmt.Errorf("gsub(pattern, replacement, x) expects 3 arguments")
-	}
-	patV, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	replV, err := Force(ctx, args[1].Val)
-	if err != nil {
-		return nil, err
-	}
-	xV, err := Force(ctx, args[2].Val)
-	if err != nil {
-		return nil, err
-	}
-	patS := toPlainStrings(patV)
-	replS := toPlainStrings(replV)
-	if len(patS) == 0 || len(replS) == 0 {
-		return nil, fmt.Errorf("gsub: invalid arguments")
-	}
-	pattern := patS[0]
-	replacement := replS[0]
+func builtinSub(ctx *Context, args []ArgValue) (Value, error) {
+	return replaceImpl(ctx, args, "sub", false)
+}
 
-	cv, err := asCharVec(ctx, xV)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]StringElem, len(cv))
-	for i, e := range cv {
-		if e.NA {
-			out[i] = StringElem{NA: true}
-		} else {
-			out[i] = StringElem{Val: strings.ReplaceAll(e.Val, pattern, replacement)}
-		}
-	}
-	return &CharVec{Data: out}, nil
+func builtinGsub(ctx *Context, args []ArgValue) (Value, error) {
+	return replaceImpl(ctx, args, "gsub", true)
 }
 
 func builtinStrsplit(ctx *Context, args []ArgValue) (Value, error) {

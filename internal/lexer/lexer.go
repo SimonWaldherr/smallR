@@ -427,7 +427,7 @@ func isIdentStart(r rune) bool {
 }
 
 func isIdentPart(r rune) bool {
-	return r == '.' || r == '_' || unicode.IsLetter(r)
+	return isIdentStart(r)
 }
 
 func (l *Lexer) DebugTokens() ([]token.Token, error) {

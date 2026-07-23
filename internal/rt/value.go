@@ -51,6 +51,14 @@ func (b *Base) SetAttr(name string, v Value) {
 	b.attrs[name] = v
 }
 
+// copyAttrs copies every attribute from src onto dst, used whenever a vector
+// or list is cloned/re-sliced and should keep its original attributes.
+func copyAttrs(dst, src Value) {
+	for k, a := range src.Attrs() {
+		dst.SetAttr(k, a)
+	}
+}
+
 type Null struct{ Base }
 
 func (n *Null) Type() string { return "null" }

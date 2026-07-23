@@ -63,6 +63,18 @@ func makeLetters(upper bool) *CharVec {
 
 // --- Vectorized unary math functions ---
 
+func mapDoubleVec(dv []FloatElem, fn func(float64) float64) []FloatElem {
+	out := make([]FloatElem, len(dv))
+	for i, e := range dv {
+		if e.NA {
+			out[i] = FloatElem{NA: true}
+		} else {
+			out[i] = FloatElem{Val: fn(e.Val)}
+		}
+	}
+	return out
+}
+
 func vecMathUnary(ctx *Context, args []ArgValue, name string, fn func(float64) float64) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s(x) expects 1 argument", name)
@@ -75,15 +87,7 @@ func vecMathUnary(ctx *Context, args []ArgValue, name string, fn func(float64) f
 	if err != nil {
 		return nil, err
 	}
-	out := make([]FloatElem, len(dv))
-	for i, e := range dv {
-		if e.NA {
-			out[i] = FloatElem{NA: true}
-		} else {
-			out[i] = FloatElem{Val: fn(e.Val)}
-		}
-	}
-	return &DoubleVec{Data: out}, nil
+	return &DoubleVec{Data: mapDoubleVec(dv, fn)}, nil
 }
 
 func builtinAbs(ctx *Context, args []ArgValue) (Value, error) {
@@ -195,7 +199,15 @@ func builtinLog(ctx *Context, args []ArgValue) (Value, error) {
 		logBase := math.Log(base)
 		fn = func(x float64) float64 { return math.Log(x) / logBase }
 	}
-	return vecMathUnary(ctx, args[:1], "log", fn)
+	x, err := Force(ctx, args[0].Val)
+	if err != nil {
+		return nil, err
+	}
+	dv, err := asDoubleVec(ctx, x)
+	if err != nil {
+		return nil, err
+	}
+	return &DoubleVec{Data: mapDoubleVec(dv, fn)}, nil
 }
 
 func builtinLog2(ctx *Context, args []ArgValue) (Value, error) {
@@ -280,29 +292,22 @@ func builtinSign(ctx *Context, args []ArgValue) (Value, error) {
 	})
 }
 
-func builtinMax(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	if v, ok := getNamed(args, "na.rm"); ok {
-		fv, _ := Force(ctx, v)
-		b, na, _ := asLogicalScalar(ctx, fv)
-		if !na {
-			naRm = b
-		}
-	}
-	result := math.Inf(-1)
-	anyNA := false
-	any := false
+// foldNumericArgs applies combine over every non-NA numeric element across
+// all positional (non na.rm) arguments, seeded with init. Shared by
+// max/min/prod, which differ only in the seed and the combining operation.
+func foldNumericArgs(ctx *Context, args []ArgValue, naRm bool, init float64, combine func(acc, v float64) float64) (result float64, anyNA bool, any bool, err error) {
+	result = init
 	for _, a := range args {
 		if a.Name == "na.rm" {
 			continue
 		}
-		v, err := Force(ctx, a.Val)
-		if err != nil {
-			return nil, err
+		v, ferr := Force(ctx, a.Val)
+		if ferr != nil {
+			return 0, false, false, ferr
 		}
-		dv, err := asDoubleVec(ctx, v)
-		if err != nil {
-			return nil, err
+		dv, derr := asDoubleVec(ctx, v)
+		if derr != nil {
+			return 0, false, false, derr
 		}
 		for _, e := range dv {
 			if e.NA {
@@ -313,10 +318,25 @@ func builtinMax(ctx *Context, args []ArgValue) (Value, error) {
 				continue
 			}
 			any = true
-			if e.Val > result {
-				result = e.Val
-			}
+			result = combine(result, e.Val)
 		}
+	}
+	return result, anyNA, any, nil
+}
+
+func builtinMax(ctx *Context, args []ArgValue) (Value, error) {
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	result, anyNA, any, err := foldNumericArgs(ctx, args, naRm, math.Inf(-1), func(acc, v float64) float64 {
+		if v > acc {
+			return v
+		}
+		return acc
+	})
+	if err != nil {
+		return nil, err
 	}
 	if anyNA && !naRm {
 		return DoubleNA(), nil
@@ -328,42 +348,18 @@ func builtinMax(ctx *Context, args []ArgValue) (Value, error) {
 }
 
 func builtinMin(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	if v, ok := getNamed(args, "na.rm"); ok {
-		fv, _ := Force(ctx, v)
-		b, na, _ := asLogicalScalar(ctx, fv)
-		if !na {
-			naRm = b
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
-	result := math.Inf(1)
-	anyNA := false
-	any := false
-	for _, a := range args {
-		if a.Name == "na.rm" {
-			continue
+	result, anyNA, any, err := foldNumericArgs(ctx, args, naRm, math.Inf(1), func(acc, v float64) float64 {
+		if v < acc {
+			return v
 		}
-		v, err := Force(ctx, a.Val)
-		if err != nil {
-			return nil, err
-		}
-		dv, err := asDoubleVec(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range dv {
-			if e.NA {
-				if naRm {
-					continue
-				}
-				anyNA = true
-				continue
-			}
-			any = true
-			if e.Val < result {
-				result = e.Val
-			}
-		}
+		return acc
+	})
+	if err != nil {
+		return nil, err
 	}
 	if anyNA && !naRm {
 		return DoubleNA(), nil
@@ -375,13 +371,9 @@ func builtinMin(ctx *Context, args []ArgValue) (Value, error) {
 }
 
 func builtinRange(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	if v, ok := getNamed(args, "na.rm"); ok {
-		fv, _ := Force(ctx, v)
-		b, na, _ := asLogicalScalar(ctx, fv)
-		if !na {
-			naRm = b
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 	minVal := math.Inf(1)
 	maxVal := math.Inf(-1)
@@ -420,9 +412,12 @@ func builtinRange(ctx *Context, args []ArgValue) (Value, error) {
 	return &DoubleVec{Data: []FloatElem{{Val: minVal}, {Val: maxVal}}}, nil
 }
 
-func builtinCumsum(ctx *Context, args []ArgValue) (Value, error) {
+// cumulative implements cumsum/cumprod/cummax/cummin: a running fold over x
+// seeded with init, where hitting an NA fills the remainder of the result
+// with NA (matching R's cumulative-function semantics).
+func cumulative(ctx *Context, args []ArgValue, name string, init float64, combine func(acc, v float64) float64) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("cumsum(x) expects 1 argument")
+		return nil, fmt.Errorf("%s(x) expects 1 argument", name)
 	}
 	v, err := Force(ctx, args[0].Val)
 	if err != nil {
@@ -433,7 +428,7 @@ func builtinCumsum(ctx *Context, args []ArgValue) (Value, error) {
 		return nil, err
 	}
 	out := make([]FloatElem, len(dv))
-	var sum float64
+	acc := init
 	for i, e := range dv {
 		if e.NA {
 			for j := i; j < len(dv); j++ {
@@ -441,130 +436,46 @@ func builtinCumsum(ctx *Context, args []ArgValue) (Value, error) {
 			}
 			break
 		}
-		sum += e.Val
-		out[i] = FloatElem{Val: sum}
+		acc = combine(acc, e.Val)
+		out[i] = FloatElem{Val: acc}
 	}
 	return &DoubleVec{Data: out}, nil
+}
+
+func builtinCumsum(ctx *Context, args []ArgValue) (Value, error) {
+	return cumulative(ctx, args, "cumsum", 0, func(acc, v float64) float64 { return acc + v })
 }
 
 func builtinCumprod(ctx *Context, args []ArgValue) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("cumprod(x) expects 1 argument")
-	}
-	v, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	dv, err := asDoubleVec(ctx, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]FloatElem, len(dv))
-	prod := 1.0
-	for i, e := range dv {
-		if e.NA {
-			for j := i; j < len(dv); j++ {
-				out[j] = FloatElem{NA: true}
-			}
-			break
-		}
-		prod *= e.Val
-		out[i] = FloatElem{Val: prod}
-	}
-	return &DoubleVec{Data: out}, nil
+	return cumulative(ctx, args, "cumprod", 1, func(acc, v float64) float64 { return acc * v })
 }
 
 func builtinCummax(ctx *Context, args []ArgValue) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("cummax(x) expects 1 argument")
-	}
-	v, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	dv, err := asDoubleVec(ctx, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]FloatElem, len(dv))
-	curMax := math.Inf(-1)
-	for i, e := range dv {
-		if e.NA {
-			for j := i; j < len(dv); j++ {
-				out[j] = FloatElem{NA: true}
-			}
-			break
+	return cumulative(ctx, args, "cummax", math.Inf(-1), func(acc, v float64) float64 {
+		if v > acc {
+			return v
 		}
-		if e.Val > curMax {
-			curMax = e.Val
-		}
-		out[i] = FloatElem{Val: curMax}
-	}
-	return &DoubleVec{Data: out}, nil
+		return acc
+	})
 }
 
 func builtinCummin(ctx *Context, args []ArgValue) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("cummin(x) expects 1 argument")
-	}
-	v, err := Force(ctx, args[0].Val)
-	if err != nil {
-		return nil, err
-	}
-	dv, err := asDoubleVec(ctx, v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]FloatElem, len(dv))
-	curMin := math.Inf(1)
-	for i, e := range dv {
-		if e.NA {
-			for j := i; j < len(dv); j++ {
-				out[j] = FloatElem{NA: true}
-			}
-			break
+	return cumulative(ctx, args, "cummin", math.Inf(1), func(acc, v float64) float64 {
+		if v < acc {
+			return v
 		}
-		if e.Val < curMin {
-			curMin = e.Val
-		}
-		out[i] = FloatElem{Val: curMin}
-	}
-	return &DoubleVec{Data: out}, nil
+		return acc
+	})
 }
 
 func builtinProd(ctx *Context, args []ArgValue) (Value, error) {
-	naRm := false
-	if v, ok := getNamed(args, "na.rm"); ok {
-		fv, _ := Force(ctx, v)
-		b, na, _ := asLogicalScalar(ctx, fv)
-		if !na {
-			naRm = b
-		}
+	naRm, err := naRmArg(ctx, args)
+	if err != nil {
+		return nil, err
 	}
-	result := 1.0
-	anyNA := false
-	for _, a := range args {
-		if a.Name == "na.rm" {
-			continue
-		}
-		v, err := Force(ctx, a.Val)
-		if err != nil {
-			return nil, err
-		}
-		dv, err := asDoubleVec(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range dv {
-			if e.NA {
-				if naRm {
-					continue
-				}
-				anyNA = true
-				continue
-			}
-			result *= e.Val
-		}
+	result, anyNA, _, err := foldNumericArgs(ctx, args, naRm, 1.0, func(acc, v float64) float64 { return acc * v })
+	if err != nil {
+		return nil, err
 	}
 	if anyNA && !naRm {
 		return DoubleNA(), nil

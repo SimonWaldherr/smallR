@@ -6,7 +6,11 @@ type Env struct {
 }
 
 func NewEnv(parent *Env) *Env {
-	return &Env{parent: parent, vars: map[string]Value{}}
+	// vars is left nil and allocated lazily on first write: reading a nil map
+	// is safe in Go, and most call frames (e.g. zero-argument functions with
+	// no locals) never assign anything, so this skips a map allocation on
+	// every single function call.
+	return &Env{parent: parent}
 }
 
 func (e *Env) Parent() *Env { return e.parent }
@@ -28,12 +32,15 @@ func (e *Env) GetLocal(name string) (Value, bool) {
 }
 
 func (e *Env) SetLocal(name string, v Value) {
+	if e.vars == nil {
+		e.vars = map[string]Value{}
+	}
 	e.vars[name] = v
 }
 
 func (e *Env) Assign(name string, v Value) {
 	// R '<-' assigns in current environment by default.
-	e.vars[name] = v
+	e.SetLocal(name, v)
 }
 
 func (e *Env) AssignSuper(name string, v Value) {
@@ -49,5 +56,5 @@ func (e *Env) AssignSuper(name string, v Value) {
 	for top.parent != nil {
 		top = top.parent
 	}
-	top.vars[name] = v
+	top.SetLocal(name, v)
 }

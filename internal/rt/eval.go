@@ -571,14 +571,24 @@ func callClosure(ctx *Context, fn *ClosureFunc, args []ArgValue) (Value, error) 
 		val Value
 	}
 	binds := make([]bind, len(fn.Params))
-	paramIndex := map[string]int{}
 	dotsIndex := -1
 	for i, p := range fn.Params {
 		if p.Dots {
 			dotsIndex = i
-		} else {
-			paramIndex[p.Name] = i
+			break
 		}
+	}
+
+	// paramIndexOf finds the formal parameter named name via a linear scan.
+	// Closures typically have few formals, so this avoids allocating a
+	// map[string]int on every single call (R functions are called a lot).
+	paramIndexOf := func(name string) int {
+		for i, p := range fn.Params {
+			if !p.Dots && p.Name == name {
+				return i
+			}
+		}
+		return -1
 	}
 
 	// Capture dots
@@ -611,7 +621,7 @@ func callClosure(ctx *Context, fn *ClosureFunc, args []ArgValue) (Value, error) 
 		if a.Name == "" {
 			continue
 		}
-		if idx, ok := paramIndex[a.Name]; ok {
+		if idx := paramIndexOf(a.Name); idx >= 0 {
 			if binds[idx].set {
 				return nil, fmt.Errorf("formal argument '%s' matched by multiple actual arguments", a.Name)
 			}
@@ -1861,38 +1871,27 @@ func setDollar(ctx *Context, x Value, name string, rhs Value) (Value, error) {
 
 func cloneList(v *ListVec) *ListVec {
 	out := &ListVec{Data: append([]Value(nil), v.Data...)}
-	// shallow copy attrs
-	for k, a := range v.Attrs() {
-		out.SetAttr(k, a)
-	}
+	copyAttrs(out, v)
 	return out
 }
 func cloneDouble(v *DoubleVec) *DoubleVec {
 	out := &DoubleVec{Data: append([]FloatElem(nil), v.Data...)}
-	for k, a := range v.Attrs() {
-		out.SetAttr(k, a)
-	}
+	copyAttrs(out, v)
 	return out
 }
 func cloneInt(v *IntVec) *IntVec {
 	out := &IntVec{Data: append([]IntElem(nil), v.Data...)}
-	for k, a := range v.Attrs() {
-		out.SetAttr(k, a)
-	}
+	copyAttrs(out, v)
 	return out
 }
 func cloneLogical(v *LogicalVec) *LogicalVec {
 	out := &LogicalVec{Data: append([]LogicalElem(nil), v.Data...)}
-	for k, a := range v.Attrs() {
-		out.SetAttr(k, a)
-	}
+	copyAttrs(out, v)
 	return out
 }
 func cloneChar(v *CharVec) *CharVec {
 	out := &CharVec{Data: append([]StringElem(nil), v.Data...)}
-	for k, a := range v.Attrs() {
-		out.SetAttr(k, a)
-	}
+	copyAttrs(out, v)
 	return out
 }
 
