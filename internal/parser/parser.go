@@ -288,6 +288,16 @@ func (p *Parser) parseBlock() ast.Expr {
 		if e != nil {
 			exprs = append(exprs, e)
 		}
+		// If the statement just parsed was itself block-shaped (for/if/while/
+		// function/{...}), parseExpression leaves p.cur sitting on that
+		// construct's own closing brace, never advancing past it. That brace
+		// can never be *this* block's terminator — by nesting, ours (if this
+		// was the last statement) is a distinct, later '}' — so step past it
+		// once before scanning for a separator, or it gets mistaken for our
+		// own closing brace and the block ends prematurely.
+		if p.curIs(token.RBRACE) {
+			p.next()
+		}
 		// move to separator or }
 		for p.cur.Type != token.EOF && p.cur.Type != token.RBRACE && p.cur.Type != token.NL && p.cur.Type != token.SEMI {
 			p.next()

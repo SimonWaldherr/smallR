@@ -392,12 +392,24 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 	}
 }
 
-// Force resolves a promise if needed.
+// Force resolves a promise, and keeps resolving if the result is itself a
+// promise. That chain happens whenever a promise's expression is just an
+// identifier bound to another (still-unforced) promise — e.g. calling
+// length(x) inside function(x), where x is itself a lazy argument: forcing
+// the "x" reference's own promise evaluates the identifier and yields the
+// caller's original argument promise, which still needs forcing in turn.
 func Force(ctx *Context, v Value) (Value, error) {
-	if p, ok := v.(*Promise); ok {
-		return p.Force(ctx)
+	for {
+		p, ok := v.(*Promise)
+		if !ok {
+			return v, nil
+		}
+		fv, err := p.Force(ctx)
+		if err != nil {
+			return nil, err
+		}
+		v = fv
 	}
-	return v, nil
 }
 
 func evalAssign(ctx *Context, env *Env, a *ast.AssignExpr) (Value, error) {
