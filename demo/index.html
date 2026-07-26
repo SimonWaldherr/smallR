@@ -5,8 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>smallR — Interactive R in the Browser</title>
   <link rel="stylesheet" href="./style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-  <script src="./wasm_exec.js"></script>
+  <!-- smallr.wasm is by far the largest asset on this page; kick off its
+       download immediately instead of waiting for demo.js to request it. -->
+  <link rel="preload" href="./smallr.wasm" as="fetch" crossorigin />
+  <!-- defer keeps these from blocking HTML parsing while still guaranteeing
+       they run, in order, before the demo.js module (which needs both). -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" defer></script>
+  <script src="./wasm_exec.js" defer></script>
 </head>
 <body>
   <header>

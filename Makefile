@@ -6,10 +6,13 @@ PKG := ./cmd/smallr-wasm
 
 all: build-wasm copy-wasm-exec
 
-# Build WebAssembly module named smallr.wasm into the demo directory
+# Build WebAssembly module named smallr.wasm into the demo directory.
+# -s -w strip debug info/symbol tables and -trimpath drops local build paths;
+# none of that is needed in a browser-shipped binary, and it shaves a couple
+# percent off the download size for free.
 build-wasm:
 	@echo "Building WASM -> $(OUT)"
-	GOOS=js GOARCH=wasm go build -o $(OUT) $(PKG)
+	GOOS=js GOARCH=wasm go build -ldflags="-s -w" -trimpath -o $(OUT) $(PKG)
 
 # Copy Go's wasm_exec.js into the demo folder (if present)
 copy-wasm-exec:

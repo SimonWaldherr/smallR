@@ -276,6 +276,13 @@ function toRVec(arr) {
   return `c(${parts.join(",")})`;
 }
 
+// Reads the width/height out of an SVG's viewBox="minX minY width height",
+// shared by the three charts below instead of each re-parsing it inline.
+function svgViewBoxSize(svg) {
+  const [, , w, h] = svg.attr("viewBox").split(" ").map(Number);
+  return { w, h };
+}
+
 function smallrEval(code) {
   if (typeof window.smallrEval !== "function") {
     throw new Error("WASM not loaded yet.");
@@ -429,8 +436,7 @@ function updateRegLabels() {
 
 // D3 regression chart
 const regSvg = d3.select("#chart");
-const regVB = regSvg.attr("viewBox").split(" ").map(Number);
-const regW = regVB[2], regH = regVB[3];
+const { w: regW, h: regH } = svgViewBoxSize(regSvg);
 const regM = { top: 24, right: 24, bottom: 44, left: 56 };
 const regIW = regW - regM.left - regM.right;
 const regIH = regH - regM.top - regM.bottom;
@@ -595,8 +601,7 @@ function renderStatsChart(values, labels, mean, sd) {
   const svg = d3.select("#statsChart");
   svg.selectAll("*").remove();
 
-  const vb = svg.attr("viewBox").split(" ").map(Number);
-  const W = vb[2], H = vb[3];
+  const { w: W, h: H } = svgViewBoxSize(svg);
   const m = { top: 20, right: 16, bottom: 36, left: 40 };
   const iW = W - m.left - m.right;
   const iH = H - m.top - m.bottom;
@@ -812,8 +817,7 @@ function renderTimeSeries(original, ma, windowSize) {
   const svg = d3.select("#tsChart");
   svg.selectAll("*").remove();
 
-  const vb = svg.attr("viewBox").split(" ").map(Number);
-  const W = vb[2], H = vb[3];
+  const { w: W, h: H } = svgViewBoxSize(svg);
   const m = { top: 20, right: 20, bottom: 40, left: 50 };
   const iW = W - m.left - m.right;
   const iH = H - m.top - m.bottom;
@@ -955,12 +959,21 @@ async function boot() {
   setStatus("Loading WASM...", "info");
 
   const go = new Go();
-  const resp = await fetch("./smallr.wasm");
-  if (!resp.ok) {
-    throw new Error("Failed to fetch smallr.wasm. Run `make` first.");
+  let instance;
+  try {
+    // Compiles while the ~4MB module is still downloading, instead of
+    // buffering the whole thing into memory first.
+    ({ instance } = await WebAssembly.instantiateStreaming(fetch("./smallr.wasm"), go.importObject));
+  } catch {
+    // Falls back for hosts that don't serve .wasm as application/wasm
+    // (instantiateStreaming requires it; the buffered path doesn't care).
+    const resp = await fetch("./smallr.wasm");
+    if (!resp.ok) {
+      throw new Error("Failed to fetch smallr.wasm. Run `make` first.");
+    }
+    const bytes = await resp.arrayBuffer();
+    ({ instance } = await WebAssembly.instantiate(bytes, go.importObject));
   }
-  const bytes = await resp.arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, go.importObject);
 
   go.run(instance);
 
