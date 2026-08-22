@@ -1004,6 +1004,16 @@ func evalNumericBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
 		return &IntVec{Data: out}, nil
 	}
 
+	// Integer sequences (for example 1:100000) are common in R programs. The
+	// general coercion path below turns both operands into temporary double
+	// vectors before producing the result. Avoid those full-size copies when
+	// both operands are already integers.
+	if av, ok := a.(*IntVec); ok {
+		if bv, ok := b.(*IntVec); ok {
+			return evalIntNumericBinary(op, av.Data, bv.Data)
+		}
+	}
+
 	// vectorize with recycling
 	av, err := asDoubleVec(ctx, a)
 	if err != nil {
@@ -1040,6 +1050,46 @@ func evalNumericBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
 			out[i] = FloatElem{Val: math.Mod(ae.Val, be.Val)}
 		case token.INTDIV:
 			out[i] = FloatElem{Val: math.Floor(ae.Val / be.Val)}
+		default:
+			return nil, fmt.Errorf("unsupported numeric op %s", op)
+		}
+	}
+	return &DoubleVec{Data: out}, nil
+}
+
+// evalIntNumericBinary is the integer-vector counterpart of the general
+// numeric path above. Arithmetic still returns a DoubleVec, as before, but
+// it reads the integer backing slices directly instead of allocating two
+// temporary FloatElem slices just to coerce them.
+func evalIntNumericBinary(op token.Type, av, bv []IntElem) (Value, error) {
+	n := max(len(av), len(bv))
+	if n == 0 {
+		return &DoubleVec{Data: nil}, nil
+	}
+	out := make([]FloatElem, n)
+	for i := 0; i < n; i++ {
+		ae := av[i%len(av)]
+		be := bv[i%len(bv)]
+		if ae.NA || be.NA {
+			out[i] = FloatElem{NA: true}
+			continue
+		}
+		a, b := float64(ae.Val), float64(be.Val)
+		switch op {
+		case token.PLUS:
+			out[i] = FloatElem{Val: a + b}
+		case token.MINUS:
+			out[i] = FloatElem{Val: a - b}
+		case token.STAR:
+			out[i] = FloatElem{Val: a * b}
+		case token.SLASH:
+			out[i] = FloatElem{Val: a / b}
+		case token.CARET:
+			out[i] = FloatElem{Val: math.Pow(a, b)}
+		case token.MOD:
+			out[i] = FloatElem{Val: math.Mod(a, b)}
+		case token.INTDIV:
+			out[i] = FloatElem{Val: math.Floor(a / b)}
 		default:
 			return nil, fmt.Errorf("unsupported numeric op %s", op)
 		}

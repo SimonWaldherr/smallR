@@ -346,19 +346,13 @@ func builtinSum(ctx *Context, args []ArgValue) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		dv, err := asDoubleVec(ctx, v)
+		partial, _, hasNA, err := numericSumAndCount(v)
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range dv {
-			if e.NA {
-				if naRm {
-					continue
-				}
-				anyNA = true
-				continue
-			}
-			sum += e.Val
+		sum += partial
+		if hasNA && !naRm {
+			anyNA = true
 		}
 	}
 	if anyNA && !naRm {
@@ -380,26 +374,59 @@ func builtinMean(ctx *Context, args []ArgValue) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	dv, err := asDoubleVec(ctx, v)
+	var sum float64
+	var n int
+	sum, n, anyNA, err := numericSumAndCount(v)
 	if err != nil {
 		return nil, err
 	}
-	var sum float64
-	var n int
-	for _, e := range dv {
-		if e.NA {
-			if naRm {
-				continue
-			}
-			return DoubleNA(), nil
-		}
-		sum += e.Val
-		n++
+	if anyNA && !naRm {
+		return DoubleNA(), nil
 	}
 	if n == 0 {
 		return DoubleNA(), nil
 	}
 	return DoubleScalar(sum / float64(n)), nil
+}
+
+// numericSumAndCount walks numeric and logical vectors in their native
+// representation. Aggregate functions only need one value at a time, so
+// creating an intermediate DoubleVec would add an avoidable O(n) allocation.
+func numericSumAndCount(v Value) (sum float64, count int, anyNA bool, err error) {
+	switch x := v.(type) {
+	case *DoubleVec:
+		for _, e := range x.Data {
+			if e.NA {
+				anyNA = true
+				continue
+			}
+			sum += e.Val
+			count++
+		}
+	case *IntVec:
+		for _, e := range x.Data {
+			if e.NA {
+				anyNA = true
+				continue
+			}
+			sum += float64(e.Val)
+			count++
+		}
+	case *LogicalVec:
+		for _, e := range x.Data {
+			if e.NA {
+				anyNA = true
+			} else if e.Val {
+				sum++
+				count++
+			} else {
+				count++
+			}
+		}
+	default:
+		return 0, 0, false, fmt.Errorf("cannot coerce %s to double", v.Type())
+	}
+	return sum, count, anyNA, nil
 }
 
 func builtinSD(ctx *Context, args []ArgValue) (Value, error) {

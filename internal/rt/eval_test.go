@@ -149,6 +149,8 @@ func TestBuiltinSum(t *testing.T) {
 	}{
 		{"sum(1, 2, 3)", "6"},
 		{"sum(c(10, 20, 30))", "60"},
+		{"sum(c(1, NA, 3))", "NA"},
+		{"sum(c(1, NA, 3), na.rm=TRUE)", "4"},
 	}
 
 	for _, tt := range tests {
@@ -171,6 +173,8 @@ func TestBuiltinMean(t *testing.T) {
 	}{
 		{"mean(c(1, 2, 3))", "2"},
 		{"mean(c(10, 20, 30))", "20"},
+		{"mean(c(1, NA, 3))", "NA"},
+		{"mean(c(1, NA, 3), na.rm=TRUE)", "2"},
 	}
 
 	for _, tt := range tests {
