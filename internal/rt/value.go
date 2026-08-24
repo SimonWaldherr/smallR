@@ -237,7 +237,7 @@ func (p *Promise) Force(ctx *Context) (Value, error) {
 		return p.val, p.err
 	}
 	p.forced = true
-	v, err := Eval(ctx, p.Env, p.Expr)
+	v, err := eval(ctx, p.Env, p.Expr)
 	p.val, p.err = v, err
 	return v, err
 }

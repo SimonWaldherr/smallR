@@ -50,6 +50,32 @@ func isControl(err error, kind ControlKind) (*ControlError, bool) {
 }
 
 func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	return ctx.evalWithLimits(env, expr, ctx.limits)
+}
+
+// EvalWithLimits evaluates an already-parsed expression under a caller-
+// supplied policy. It is the bounded counterpart to Eval for integrations
+// that parse source themselves.
+func EvalWithLimits(ctx *Context, env *Env, expr ast.Expr, limits ExecutionLimits) (Value, error) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	return ctx.evalWithLimits(env, expr, limits)
+}
+
+func (ctx *Context) evalWithLimits(env *Env, expr ast.Expr, limits ExecutionLimits) (Value, error) {
+	ctx.beginExecution(limits)
+	defer ctx.endExecution()
+	return eval(ctx, env, expr)
+}
+
+// eval is the internal recursive evaluator. Public entry points establish the
+// execution budget and serialize access before entering it.
+func eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
+	if err := ctx.consumeExecutionStep(); err != nil {
+		return nil, err
+	}
 	switch e := expr.(type) {
 	case *ast.Ident:
 		v, ok := env.Get(e.Name)
@@ -73,7 +99,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 		return LogicalNA(), nil
 
 	case *ast.UnaryExpr:
-		x, err := Eval(ctx, env, e.X)
+		x, err := eval(ctx, env, e.X)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +121,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 	case *ast.BinaryExpr:
 		// short-circuit for && and ||
 		if e.Op == token.ANDAND || e.Op == token.OROR {
-			left, err := Eval(ctx, env, e.Left)
+			left, err := eval(ctx, env, e.Left)
 			if err != nil {
 				return nil, err
 			}
@@ -111,7 +137,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 				if lna {
 					// NA && anything -> NA unless right is FALSE? R does tri-logic; keep NA if right not forced
 					// We'll follow a simple rule: if NA and right is FALSE => FALSE else NA.
-					right, err := Eval(ctx, env, e.Right)
+					right, err := eval(ctx, env, e.Right)
 					if err != nil {
 						return nil, err
 					}
@@ -131,7 +157,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 				if !lb {
 					return LogicalScalar(false), nil
 				}
-				right, err := Eval(ctx, env, e.Right)
+				right, err := eval(ctx, env, e.Right)
 				if err != nil {
 					return nil, err
 				}
@@ -150,7 +176,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 			}
 			// OROR
 			if lna {
-				right, err := Eval(ctx, env, e.Right)
+				right, err := eval(ctx, env, e.Right)
 				if err != nil {
 					return nil, err
 				}
@@ -170,7 +196,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 			if lb {
 				return LogicalScalar(true), nil
 			}
-			right, err := Eval(ctx, env, e.Right)
+			right, err := eval(ctx, env, e.Right)
 			if err != nil {
 				return nil, err
 			}
@@ -188,11 +214,11 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 			return LogicalScalar(rb), nil
 		}
 
-		left, err := Eval(ctx, env, e.Left)
+		left, err := eval(ctx, env, e.Left)
 		if err != nil {
 			return nil, err
 		}
-		right, err := Eval(ctx, env, e.Right)
+		right, err := eval(ctx, env, e.Right)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +238,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 	case *ast.BlockExpr:
 		var last Value = NullValue
 		for _, ex := range e.Exprs {
-			v, err := Eval(ctx, env, ex)
+			v, err := eval(ctx, env, ex)
 			if err != nil {
 				return nil, err
 			}
@@ -221,7 +247,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 		return last, nil
 
 	case *ast.IfExpr:
-		condV, err := Eval(ctx, env, e.Cond)
+		condV, err := eval(ctx, env, e.Cond)
 		if err != nil {
 			return nil, err
 		}
@@ -237,15 +263,15 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 			return nil, fmt.Errorf("missing value where TRUE/FALSE needed")
 		}
 		if b {
-			return Eval(ctx, env, e.Then)
+			return eval(ctx, env, e.Then)
 		}
 		if e.Else != nil {
-			return Eval(ctx, env, e.Else)
+			return eval(ctx, env, e.Else)
 		}
 		return NullValue, nil
 
 	case *ast.ForExpr:
-		seqV, err := Eval(ctx, env, e.Seq)
+		seqV, err := eval(ctx, env, e.Seq)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +288,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 				return nil, err
 			}
 			env.Assign(e.Var, elem)
-			v, err := Eval(ctx, env, e.Body)
+			v, err := eval(ctx, env, e.Body)
 			if err != nil {
 				if _, ok := isControl(err, ctrlNext); ok {
 					continue
@@ -279,7 +305,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 	case *ast.WhileExpr:
 		var last Value = NullValue
 		for {
-			condV, err := Eval(ctx, env, e.Cond)
+			condV, err := eval(ctx, env, e.Cond)
 			if err != nil {
 				return nil, err
 			}
@@ -297,7 +323,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 			if !b {
 				break
 			}
-			v, err := Eval(ctx, env, e.Body)
+			v, err := eval(ctx, env, e.Body)
 			if err != nil {
 				if _, ok := isControl(err, ctrlNext); ok {
 					continue
@@ -314,7 +340,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 	case *ast.RepeatExpr:
 		var last Value = NullValue
 		for {
-			v, err := Eval(ctx, env, e.Body)
+			v, err := eval(ctx, env, e.Body)
 			if err != nil {
 				if _, ok := isControl(err, ctrlNext); ok {
 					continue
@@ -336,7 +362,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 		var v Value = NullValue
 		if e.X != nil {
 			var err error
-			v, err = Eval(ctx, env, e.X)
+			v, err = eval(ctx, env, e.X)
 			if err != nil {
 				return nil, err
 			}
@@ -358,7 +384,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 		return evalCall(ctx, env, e)
 
 	case *ast.IndexExpr:
-		x, err := Eval(ctx, env, e.X)
+		x, err := eval(ctx, env, e.X)
 		if err != nil {
 			return nil, err
 		}
@@ -366,7 +392,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		idx, err := Eval(ctx, env, e.Index)
+		idx, err := eval(ctx, env, e.Index)
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +403,7 @@ func Eval(ctx *Context, env *Env, expr ast.Expr) (Value, error) {
 		return subset(ctx, x, idx, e.Double)
 
 	case *ast.DollarExpr:
-		x, err := Eval(ctx, env, e.X)
+		x, err := eval(ctx, env, e.X)
 		if err != nil {
 			return nil, err
 		}
@@ -416,7 +442,7 @@ func evalAssign(ctx *Context, env *Env, a *ast.AssignExpr) (Value, error) {
 	// Special case: right assignment "->"
 	if a.Op == token.ASSIGN_RIGHT {
 		// value -> name
-		val, err := Eval(ctx, env, a.Left)
+		val, err := eval(ctx, env, a.Left)
 		if err != nil {
 			return nil, err
 		}
@@ -432,7 +458,7 @@ func evalAssign(ctx *Context, env *Env, a *ast.AssignExpr) (Value, error) {
 		return val, nil
 	}
 
-	val, err := Eval(ctx, env, a.Right)
+	val, err := eval(ctx, env, a.Right)
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +491,7 @@ func evalAssign(ctx *Context, env *Env, a *ast.AssignExpr) (Value, error) {
 			if err != nil {
 				return nil, err
 			}
-			idxV, err := Eval(ctx, env, ix.Index)
+			idxV, err := eval(ctx, env, ix.Index)
 			if err != nil {
 				return nil, err
 			}
@@ -536,7 +562,7 @@ func evalCall(ctx *Context, env *Env, c *ast.CallExpr) (Value, error) {
 		}
 	}
 
-	fv, err := Eval(ctx, env, c.Fun)
+	fv, err := eval(ctx, env, c.Fun)
 	if err != nil {
 		return nil, err
 	}
@@ -571,6 +597,10 @@ func evalCall(ctx *Context, env *Env, c *ast.CallExpr) (Value, error) {
 		args = append(args, ArgValue{Name: a.Name, Val: &Promise{Expr: a.Value, Env: env}})
 	}
 
+	if err := ctx.enterCall(); err != nil {
+		return nil, err
+	}
+	defer ctx.leaveCall()
 	return callable.Call(ctx, env, args)
 }
 
@@ -670,7 +700,7 @@ func callClosure(ctx *Context, fn *ClosureFunc, args []ArgValue) (Value, error) 
 	}
 
 	// Execute body
-	v, err := Eval(ctx, callEnv, fn.Body)
+	v, err := eval(ctx, callEnv, fn.Body)
 	if err != nil {
 		if ce, ok := isControl(err, ctrlReturn); ok {
 			return ce.Value, nil

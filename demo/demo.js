@@ -235,6 +235,17 @@ list(
   max = round(max(data), 4)
 )`;
 
+const DEFAULT_VISUALIZATIONS = `# x, y, trend and volume are injected from the Visualization Lab.
+# Return a named list to update the summary cards above the charts.
+
+list(
+  n = length(x),
+  mean_x = round(mean(x), 2),
+  mean_y = round(mean(y), 2),
+  sd_y = round(sd(y), 2),
+  mean_volume = round(mean(volume), 2)
+)`;
+
 // ════════════════════════════════════════════
 // DOM references
 // ════════════════════════════════════════════
@@ -670,7 +681,277 @@ function renderStatsChart(values, labels, mean, sd) {
 }
 
 // ════════════════════════════════════════════
-// 4. DATA FRAMES
+// 4. VISUALIZATION LAB
+// ════════════════════════════════════════════
+
+const VIZ_GROUPS = ["Orbit", "Nova", "Pulse"];
+const VIZ_COLORS = ["#6ee7ff", "#a78bfa", "#34d399", "#fbbf24"];
+const codeVizEl = $("#codeViz");
+const vizPointsEl = $("#vizPoints");
+const vizSeparationEl = $("#vizSeparation");
+const vizPointsVal = $("#vizPointsVal");
+const vizSeparationVal = $("#vizSeparationVal");
+
+codeVizEl.value = DEFAULT_VISUALIZATIONS;
+
+function updateVizControls() {
+  vizPointsVal.textContent = vizPointsEl.value;
+  vizSeparationVal.textContent = (+vizSeparationEl.value).toFixed(1);
+}
+
+function generateVizData(n, separation) {
+  const categories = ["Core", "Growth", "Research", "Support"];
+  return Array.from({ length: n }, (_, i) => {
+    const groupIndex = i % VIZ_GROUPS.length;
+    const x = randn() * 1.25 + groupIndex * separation * 0.72;
+    const trend = i / Math.max(1, n - 1) + groupIndex * 0.12 + randn() * 0.1;
+    const y = 18 + x * 3.2 + trend * 11 + groupIndex * separation + randn() * 3.1;
+    const volume = 82 + y * 1.8 - x * 5.5 + randn() * 11;
+    const categoryIndex = (groupIndex + Math.floor(Math.random() * 3)) % categories.length;
+    return { x, y, trend, volume, group: VIZ_GROUPS[groupIndex], category: categories[categoryIndex] };
+  });
+}
+
+function finiteExtent(values, padding = 0.08) {
+  const [min, max] = d3.extent(values);
+  const spread = max - min || 1;
+  return [min - spread * padding, max + spread * padding];
+}
+
+function chartFrame(svgId, margin) {
+  const svg = d3.select(svgId);
+  svg.selectAll("*").remove();
+  const { w, h } = svgViewBoxSize(svg);
+  const innerWidth = w - margin.left - margin.right;
+  const innerHeight = h - margin.top - margin.bottom;
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  return { svg, g, w, h, innerWidth, innerHeight };
+}
+
+function styleChartAxes(g) {
+  g.selectAll(".domain").style("stroke", "rgba(255,255,255,0.14)");
+  g.selectAll(".tick line").style("stroke", "rgba(255,255,255,0.08)");
+  g.selectAll(".tick text").style("fill", "var(--muted)").style("font-size", "10px");
+}
+
+function renderHistogram(rows) {
+  const { g, innerWidth, innerHeight } = chartFrame("#histogramChart", { top: 20, right: 18, bottom: 38, left: 42 });
+  const values = rows.map(d => d.y);
+  const x = d3.scaleLinear().domain(finiteExtent(values)).range([0, innerWidth]).nice();
+  const bins = d3.bin().domain(x.domain()).thresholds(16)(values);
+  const y = d3.scaleLinear().domain([0, d3.max(bins, d => d.length) || 1]).range([innerHeight, 0]).nice();
+
+  g.selectAll(".grid").data(y.ticks(4)).join("line")
+    .attr("class", "grid").attr("x2", innerWidth)
+    .attr("y1", d => y(d)).attr("y2", d => y(d))
+    .style("stroke", "rgba(255,255,255,0.05)");
+  g.selectAll("rect").data(bins).join("rect")
+    .attr("x", d => x(d.x0) + 1).attr("width", d => Math.max(0, x(d.x1) - x(d.x0) - 2))
+    .attr("y", d => y(d.length)).attr("height", d => innerHeight - y(d.length))
+    .attr("rx", 3).style("fill", "var(--accent)").style("opacity", 0.72)
+    .on("mousemove", (event, d) => tooltip.style("opacity", 1)
+      .style("left", `${event.clientX + 14}px`).style("top", `${event.clientY - 10}px`)
+      .html(`${d.x0.toFixed(1)}–${d.x1.toFixed(1)}<br><b>${d.length}</b> observations`))
+    .on("mouseleave", () => tooltip.style("opacity", 0));
+  g.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(6));
+  g.append("g").call(d3.axisLeft(y).ticks(4).tickFormat(d3.format("d")));
+  styleChartAxes(g);
+}
+
+function renderBoxPlot(rows) {
+  const { g, innerWidth, innerHeight } = chartFrame("#boxplotChart", { top: 20, right: 18, bottom: 38, left: 42 });
+  const x = d3.scaleBand().domain(VIZ_GROUPS).range([0, innerWidth]).padding(0.42);
+  const y = d3.scaleLinear().domain(finiteExtent(rows.map(d => d.y))).range([innerHeight, 0]).nice();
+  const summaries = VIZ_GROUPS.map(group => {
+    const values = rows.filter(d => d.group === group).map(d => d.y).sort(d3.ascending);
+    return {
+      group,
+      min: d3.min(values), q1: d3.quantile(values, 0.25), median: d3.quantile(values, 0.5),
+      q3: d3.quantile(values, 0.75), max: d3.max(values),
+    };
+  });
+  g.selectAll(".grid").data(y.ticks(4)).join("line")
+    .attr("class", "grid").attr("x2", innerWidth)
+    .attr("y1", d => y(d)).attr("y2", d => y(d)).style("stroke", "rgba(255,255,255,0.05)");
+  const boxes = g.selectAll(".box").data(summaries).join("g").attr("class", "box")
+    .attr("transform", d => `translate(${x(d.group)},0)`);
+  boxes.append("line").attr("x1", x.bandwidth() / 2).attr("x2", x.bandwidth() / 2)
+    .attr("y1", d => y(d.min)).attr("y2", d => y(d.max)).style("stroke", "var(--muted)");
+  boxes.append("line").attr("x1", x.bandwidth() * 0.22).attr("x2", x.bandwidth() * 0.78)
+    .attr("y1", d => y(d.min)).attr("y2", d => y(d.min)).style("stroke", "var(--muted)");
+  boxes.append("line").attr("x1", x.bandwidth() * 0.22).attr("x2", x.bandwidth() * 0.78)
+    .attr("y1", d => y(d.max)).attr("y2", d => y(d.max)).style("stroke", "var(--muted)");
+  boxes.append("rect").attr("width", x.bandwidth()).attr("y", d => y(d.q3))
+    .attr("height", d => y(d.q1) - y(d.q3)).attr("rx", 4)
+    .style("fill", (_, i) => VIZ_COLORS[i]).style("fill-opacity", 0.36)
+    .style("stroke", (_, i) => VIZ_COLORS[i])
+    .on("mousemove", (event, d) => tooltip.style("opacity", 1)
+      .style("left", `${event.clientX + 14}px`).style("top", `${event.clientY - 10}px`)
+      .html(`<b>${d.group}</b><br>Median: ${d.median.toFixed(2)}<br>IQR: ${d.q1.toFixed(2)}–${d.q3.toFixed(2)}`))
+    .on("mouseleave", () => tooltip.style("opacity", 0));
+  boxes.append("line").attr("x2", x.bandwidth()).attr("y1", d => y(d.median)).attr("y2", d => y(d.median))
+    .style("stroke", "white").style("stroke-width", 1.5);
+  g.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).tickSize(0));
+  g.append("g").call(d3.axisLeft(y).ticks(4));
+  styleChartAxes(g);
+}
+
+function renderScatter(rows) {
+  const { g, innerWidth, innerHeight } = chartFrame("#scatterChart", { top: 20, right: 20, bottom: 42, left: 48 });
+  const x = d3.scaleLinear().domain(finiteExtent(rows.map(d => d.x))).range([0, innerWidth]).nice();
+  const y = d3.scaleLinear().domain(finiteExtent(rows.map(d => d.y))).range([innerHeight, 0]).nice();
+  const color = d3.scaleOrdinal().domain(VIZ_GROUPS).range(VIZ_COLORS);
+  g.selectAll(".grid").data(y.ticks(5)).join("line").attr("class", "grid").attr("x2", innerWidth)
+    .attr("y1", d => y(d)).attr("y2", d => y(d)).style("stroke", "rgba(255,255,255,0.05)");
+  g.selectAll("circle").data(rows).join("circle")
+    .attr("cx", d => x(d.x)).attr("cy", d => y(d.y)).attr("r", 3.3)
+    .style("fill", d => color(d.group)).style("opacity", 0.68)
+    .on("mousemove", (event, d) => tooltip.style("opacity", 1)
+      .style("left", `${event.clientX + 14}px`).style("top", `${event.clientY - 10}px`)
+      .html(`<b>${d.group}</b><br>Signal: ${d.x.toFixed(2)}<br>Outcome: ${d.y.toFixed(2)}`))
+    .on("mouseleave", () => tooltip.style("opacity", 0));
+  g.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(7));
+  g.append("g").call(d3.axisLeft(y).ticks(5));
+  styleChartAxes(g);
+  VIZ_GROUPS.forEach((group, i) => {
+    const lx = innerWidth - 184 + i * 58;
+    g.append("circle").attr("cx", lx).attr("cy", 11).attr("r", 4).style("fill", color(group));
+    g.append("text").attr("x", lx + 7).attr("y", 15).style("fill", "var(--muted)")
+      .style("font-size", "10px").text(group);
+  });
+}
+
+function correlation(a, b) {
+  const meanA = d3.mean(a), meanB = d3.mean(b);
+  let numerator = 0, squareA = 0, squareB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const da = a[i] - meanA, db = b[i] - meanB;
+    numerator += da * db; squareA += da * da; squareB += db * db;
+  }
+  return numerator / Math.sqrt(squareA * squareB);
+}
+
+function renderHeatmap(rows) {
+  const { svg, g, innerWidth, innerHeight } = chartFrame("#heatmapChart", { top: 42, right: 22, bottom: 22, left: 80 });
+  const dimensions = [
+    { key: "x", label: "Signal" }, { key: "y", label: "Outcome" },
+    { key: "trend", label: "Trend" }, { key: "volume", label: "Volume" },
+  ];
+  const values = Object.fromEntries(dimensions.map(d => [d.key, rows.map(row => row[d.key])]));
+  const cells = dimensions.flatMap(row => dimensions.map(col => ({
+    row, col, value: correlation(values[row.key], values[col.key]),
+  })));
+  const x = d3.scaleBand().domain(dimensions.map(d => d.key)).range([0, innerWidth]).padding(0.055);
+  const y = d3.scaleBand().domain(dimensions.map(d => d.key)).range([0, innerHeight]).padding(0.055);
+  const fill = d3.scaleSequential(t => d3.interpolateRdBu(1 - t)).domain([-1, 1]);
+  g.selectAll("rect").data(cells).join("rect")
+    .attr("x", d => x(d.col.key)).attr("y", d => y(d.row.key))
+    .attr("width", x.bandwidth()).attr("height", y.bandwidth()).attr("rx", 5)
+    .style("fill", d => fill(d.value)).style("stroke", "rgba(255,255,255,0.08)")
+    .on("mousemove", (event, d) => tooltip.style("opacity", 1)
+      .style("left", `${event.clientX + 14}px`).style("top", `${event.clientY - 10}px`)
+      .html(`${d.row.label} × ${d.col.label}<br><b>${d.value.toFixed(2)}</b>`))
+    .on("mouseleave", () => tooltip.style("opacity", 0));
+  g.selectAll(".cell-value").data(cells).join("text").attr("class", "cell-value")
+    .attr("x", d => x(d.col.key) + x.bandwidth() / 2).attr("y", d => y(d.row.key) + y.bandwidth() / 2 + 4)
+    .attr("text-anchor", "middle").style("font-size", "11px").style("font-weight", "700")
+    .style("fill", d => Math.abs(d.value) > 0.5 ? "#0b0f16" : "var(--text)").text(d => d.value.toFixed(2));
+  g.append("g").call(d3.axisTop(x).tickFormat(key => dimensions.find(d => d.key === key).label).tickSize(0));
+  g.append("g").call(d3.axisLeft(y).tickFormat(key => dimensions.find(d => d.key === key).label).tickSize(0));
+  styleChartAxes(g);
+  svg.append("text").attr("x", 16).attr("y", 17).style("font-size", "10px").style("fill", "var(--muted)")
+    .text("Negative");
+  svg.append("text").attr("x", 456).attr("y", 17).style("font-size", "10px").style("fill", "var(--muted)")
+    .text("Positive");
+}
+
+function renderDonut(rows) {
+  const { svg, g, innerWidth, innerHeight } = chartFrame("#donutChart", { top: 18, right: 18, bottom: 18, left: 18 });
+  const entries = Array.from(d3.rollup(rows, values => values.length, d => d.category), ([category, value]) => ({ category, value }))
+    .sort((a, b) => d3.descending(a.value, b.value));
+  const radius = Math.min(innerWidth, innerHeight) * 0.34;
+  const center = g.append("g").attr("transform", `translate(${innerWidth * 0.38},${innerHeight / 2})`);
+  const color = d3.scaleOrdinal().domain(entries.map(d => d.category)).range(VIZ_COLORS);
+  const arc = d3.arc().innerRadius(radius * 0.62).outerRadius(radius);
+  const pie = d3.pie().value(d => d.value).sort(null);
+  center.selectAll("path").data(pie(entries)).join("path").attr("d", arc)
+    .style("fill", d => color(d.data.category)).style("stroke", "#0f1623").style("stroke-width", 3)
+    .on("mousemove", (event, d) => tooltip.style("opacity", 1)
+      .style("left", `${event.clientX + 14}px`).style("top", `${event.clientY - 10}px`)
+      .html(`<b>${d.data.category}</b><br>${d.data.value} observations (${(d.data.value / rows.length * 100).toFixed(1)}%)`))
+    .on("mouseleave", () => tooltip.style("opacity", 0));
+  center.append("text").attr("text-anchor", "middle").attr("y", -3).style("fill", "var(--text)")
+    .style("font-size", "24px").style("font-weight", "800").text(rows.length);
+  center.append("text").attr("text-anchor", "middle").attr("y", 15).style("fill", "var(--muted)")
+    .style("font-size", "10px").text("observations");
+  const legend = g.append("g").attr("transform", `translate(${innerWidth * 0.7},${innerHeight / 2 - entries.length * 14})`);
+  entries.forEach((entry, i) => {
+    const y = i * 28;
+    legend.append("circle").attr("cx", 0).attr("cy", y).attr("r", 5).style("fill", color(entry.category));
+    legend.append("text").attr("x", 11).attr("y", y + 4).style("fill", "var(--text)").style("font-size", "11px")
+      .text(`${entry.category} · ${entry.value}`);
+  });
+  svg.selectAll("text").style("font-family", "inherit");
+}
+
+function basicVizSummary(rows) {
+  return {
+    n: rows.length,
+    mean_x: d3.mean(rows, d => d.x),
+    mean_y: d3.mean(rows, d => d.y),
+    sd_y: d3.deviation(rows, d => d.y),
+    mean_volume: d3.mean(rows, d => d.volume),
+  };
+}
+
+function renderVizSummary(summary) {
+  const items = [
+    ["n", summary.n, 0], ["mean x", summary.mean_x, 2], ["mean y", summary.mean_y, 2], ["sd y", summary.sd_y, 2],
+  ];
+  $("#vizSummary").innerHTML = items.map(([label, value, digits]) => `
+    <div><span>${label}</span><b>${Number(value).toFixed(digits)}</b></div>
+  `).join("");
+}
+
+function renderVisualizationLab(rows) {
+  renderHistogram(rows);
+  renderBoxPlot(rows);
+  renderScatter(rows);
+  renderHeatmap(rows);
+  renderDonut(rows);
+}
+
+let currentViz = generateVizData(+vizPointsEl.value, +vizSeparationEl.value);
+
+function runVisualizationLab() {
+  updateVizControls();
+  setStatus("Running visualizations...", "running");
+  const prelude = [
+    `x <- ${toRVec(currentViz.map(d => d.x))}`,
+    `y <- ${toRVec(currentViz.map(d => d.y))}`,
+    `trend <- ${toRVec(currentViz.map(d => d.trend))}`,
+    `volume <- ${toRVec(currentViz.map(d => d.volume))}`,
+  ].join("\n") + "\n";
+  const { json, output } = smallrEval(prelude + codeVizEl.value);
+  $("#vizOut").textContent = output || "Summary calculated in smallR. Edit the code to add output.";
+  renderVizSummary({ ...basicVizSummary(currentViz), ...(json || {}) });
+  renderVisualizationLab(currentViz);
+  setStatus("Visualization Lab ready", "ok");
+}
+
+$("#runViz").addEventListener("click", () => {
+  try { runVisualizationLab(); } catch (e) { $("#vizOut").textContent = String(e.message || e); setStatus("Error", "error"); }
+});
+$("#regenViz").addEventListener("click", () => {
+  try {
+    currentViz = generateVizData(+vizPointsEl.value, +vizSeparationEl.value);
+    runVisualizationLab();
+  } catch (e) { $("#vizOut").textContent = String(e.message || e); setStatus("Error", "error"); }
+});
+[vizPointsEl, vizSeparationEl].forEach(el => el.addEventListener("input", updateVizControls));
+
+// ════════════════════════════════════════════
+// 5. DATA FRAMES
 // ════════════════════════════════════════════
 
 const codeDFEl = $("#codeDataFrame");
@@ -729,7 +1010,7 @@ function renderDFTable(data) {
 }
 
 // ════════════════════════════════════════════
-// 5. STRINGS & FUNCTIONAL
+// 6. STRINGS & FUNCTIONAL
 // ════════════════════════════════════════════
 
 const codeStrEl = $("#codeStrings");
@@ -748,7 +1029,7 @@ $("#runStrings").addEventListener("click", () => {
 });
 
 // ════════════════════════════════════════════
-// 6. TIME SERIES
+// 7. TIME SERIES
 // ════════════════════════════════════════════
 
 const codeTSEl = $("#codeTimeSeries");
@@ -982,6 +1263,8 @@ async function boot() {
   // Auto-run the regression demo
   updateRegLabels();
   recomputeReg();
+  updateVizControls();
+  runVisualizationLab();
 }
 
 boot().catch(err => {

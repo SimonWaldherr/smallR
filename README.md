@@ -33,6 +33,34 @@ Start the REPL:
 go run ./cmd/smallr
 ```
 
+## Safe embedding
+
+Every evaluation has safe defaults: at most 1,000,000 AST steps, 1,000 nested
+function calls, and two seconds of wall-clock time. This stops endless
+`while`/`repeat` loops and runaway recursion. Limit errors can be matched with
+`errors.Is`.
+
+Tools that evaluate untrusted snippets should set limits appropriate to their
+request budget:
+
+```go
+ctx := smallr.NewContext()
+res, err := smallr.EvalStringWithLimits(ctx, code, smallr.ExecutionLimits{
+    MaxSteps:     50_000,
+    MaxCallDepth: 100,
+    Timeout:      250 * time.Millisecond,
+})
+if errors.Is(err, smallr.ErrExecutionStepLimit) ||
+   errors.Is(err, smallr.ErrExecutionCallDepth) ||
+   errors.Is(err, smallr.ErrExecutionTimeout) {
+    // Treat the input as over budget.
+}
+```
+
+`Context` serializes its public evaluation calls. Do not mutate its public
+`Global` or `Output` fields while an evaluation is active. Use a separate
+context when evaluations should run in parallel or need isolated variables.
+
 ## WebAssembly build
 
 Build:
@@ -74,4 +102,3 @@ Built-ins: `print`, `cat`, `c`, `list`, `length`, `sum`, `mean`, `seq`, `rep`, `
 ## Examples
 
 See `examples/`.
-

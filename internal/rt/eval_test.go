@@ -1,8 +1,13 @@
 package rt
 
 import (
+	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"simonwaldherr.de/go/smallr/internal/parser"
 )
 
 func TestBasicArithmetic(t *testing.T) {
@@ -117,6 +122,94 @@ func TestFunction(t *testing.T) {
 	}
 	if res.Value.String() != "10" {
 		t.Errorf("expected 10, got %s", res.Value.String())
+	}
+}
+
+func TestExecutionStepLimitStopsRepeat(t *testing.T) {
+	ctx := NewContext()
+	_, err := ctx.EvalStringWithLimits(`repeat { x <- 1 }`, ExecutionLimits{MaxSteps: 64})
+	if !errors.Is(err, ErrExecutionStepLimit) {
+		t.Fatalf("expected step-limit error, got %v", err)
+	}
+}
+
+func TestDefaultExecutionLimitsStopRepeat(t *testing.T) {
+	ctx := NewContext()
+	limits := ctx.ExecutionLimits()
+	if limits.MaxSteps == 0 || limits.MaxCallDepth == 0 || limits.Timeout == 0 {
+		t.Fatalf("default execution limits must be enabled: %+v", limits)
+	}
+	_, err := ctx.EvalString(`repeat { x <- 1 }`)
+	if !errors.Is(err, ErrExecutionStepLimit) && !errors.Is(err, ErrExecutionTimeout) {
+		t.Fatalf("expected default limits to stop repeat, got %v", err)
+	}
+}
+
+func TestExecutionTimeoutStopsRepeat(t *testing.T) {
+	ctx := NewContext()
+	_, err := ctx.EvalStringWithLimits(`repeat { x <- 1 }`, ExecutionLimits{Timeout: time.Nanosecond})
+	if !errors.Is(err, ErrExecutionTimeout) {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
+func TestExecutionCallDepthStopsRecursion(t *testing.T) {
+	ctx := NewContext()
+	_, err := ctx.EvalStringWithLimits(`
+f <- function() { f() }
+f()
+`, ExecutionLimits{MaxSteps: 10_000, MaxCallDepth: 16})
+	if !errors.Is(err, ErrExecutionCallDepth) {
+		t.Fatalf("expected call-depth error, got %v", err)
+	}
+}
+
+func TestExecutionLimitsAllowBoundedLoop(t *testing.T) {
+	ctx := NewContext()
+	res, err := ctx.EvalStringWithLimits(`
+i <- 0
+while (i < 10) { i <- i + 1 }
+i
+`, ExecutionLimits{MaxSteps: 1_000, MaxCallDepth: 32, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("bounded loop failed: %v", err)
+	}
+	if got := res.Value.String(); got != "10" {
+		t.Fatalf("expected 10, got %s", got)
+	}
+}
+
+func TestEvalWithLimitsStopsRepeat(t *testing.T) {
+	ctx := NewContext()
+	prog, err := parser.New(`repeat { x <- 1 }`).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	_, err = EvalWithLimits(ctx, ctx.Global, prog.Exprs[0], ExecutionLimits{MaxSteps: 64})
+	if !errors.Is(err, ErrExecutionStepLimit) {
+		t.Fatalf("expected step-limit error through EvalWithLimits, got %v", err)
+	}
+}
+
+func TestContextSerializesConcurrentEvaluations(t *testing.T) {
+	ctx := NewContext()
+	const workers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := ctx.EvalString(`sum(1:100)`)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent evaluation failed: %v", err)
+		}
 	}
 }
 

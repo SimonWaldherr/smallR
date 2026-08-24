@@ -33,6 +33,7 @@
       <button class="tab active" data-demo="playground">Playground</button>
       <button class="tab" data-demo="regression">Regression</button>
       <button class="tab" data-demo="stats">Statistics</button>
+      <button class="tab" data-demo="visualizations">Visualization Lab</button>
       <button class="tab" data-demo="dataframe">Data Frames</button>
       <button class="tab" data-demo="strings">Strings &amp; Functional</button>
       <button class="tab" data-demo="timeseries">Time Series</button>
@@ -158,6 +159,67 @@
               <svg id="statsChart" viewBox="0 0 500 260" preserveAspectRatio="xMidYMid meet"></svg>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Visualization Lab ===== -->
+    <section class="demo-content" id="demo-visualizations">
+      <div class="panel full-width">
+        <div class="section-heading">
+          <div>
+            <h2>Visualization Lab</h2>
+            <p class="lead">One synthetic dataset, five complementary views. smallR calculates the live summary; D3 draws the exploration.</p>
+          </div>
+          <div class="viz-summary" id="vizSummary" aria-live="polite"></div>
+        </div>
+
+        <div class="controls viz-controls">
+          <label>
+            Observations
+            <input id="vizPoints" type="range" min="60" max="480" step="20" value="240" />
+            <span class="val" id="vizPointsVal">240</span>
+          </label>
+          <label>
+            Group separation
+            <input id="vizSeparation" type="range" min="0" max="8" step="0.5" value="3" />
+            <span class="val" id="vizSeparationVal">3.0</span>
+          </label>
+          <div class="buttons">
+            <button id="regenViz">New sample</button>
+            <button class="btn-run" id="runViz">&#9654; Run smallR &amp; render</button>
+          </div>
+        </div>
+
+        <div class="viz-lab-layout">
+          <details class="codebox" open>
+            <summary>smallR summary code (editable)</summary>
+            <textarea id="codeViz" spellcheck="false"></textarea>
+          </details>
+          <pre class="out" id="vizOut"></pre>
+        </div>
+
+        <div class="visualization-grid">
+          <article class="viz-card">
+            <div class="viz-card-heading"><h3>Distribution</h3><span>Histogram</span></div>
+            <svg id="histogramChart" viewBox="0 0 520 300" role="img" aria-label="Histogram of outcome values"></svg>
+          </article>
+          <article class="viz-card">
+            <div class="viz-card-heading"><h3>Groups</h3><span>Box plot</span></div>
+            <svg id="boxplotChart" viewBox="0 0 520 300" role="img" aria-label="Box plot of outcome values by group"></svg>
+          </article>
+          <article class="viz-card viz-card-wide">
+            <div class="viz-card-heading"><h3>Relationship</h3><span>Scatter plot</span></div>
+            <svg id="scatterChart" viewBox="0 0 760 340" role="img" aria-label="Scatter plot of signal and outcome by group"></svg>
+          </article>
+          <article class="viz-card">
+            <div class="viz-card-heading"><h3>Feature overlap</h3><span>Correlation</span></div>
+            <svg id="heatmapChart" viewBox="0 0 520 340" role="img" aria-label="Correlation heatmap"></svg>
+          </article>
+          <article class="viz-card">
+            <div class="viz-card-heading"><h3>Composition</h3><span>Donut chart</span></div>
+            <svg id="donutChart" viewBox="0 0 520 340" role="img" aria-label="Category composition donut chart"></svg>
+          </article>
         </div>
       </div>
     </section>

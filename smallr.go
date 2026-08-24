@@ -74,8 +74,31 @@ func Eval(ctx *Context, env *Env, expr Expr) (Value, error) {
 	return rt.Eval(ctx, env, expr)
 }
 
+// ExecutionLimits bounds one evaluation. Keep the default limits enabled for
+// untrusted input; zero disables the respective limit.
+type ExecutionLimits = rt.ExecutionLimits
+
+var (
+	DefaultExecutionLimits = rt.DefaultExecutionLimits
+	ErrExecutionStepLimit  = rt.ErrExecutionStepLimit
+	ErrExecutionCallDepth  = rt.ErrExecutionCallDepth
+	ErrExecutionTimeout    = rt.ErrExecutionTimeout
+)
+
+// EvalWithLimits evaluates an already-parsed expression under the supplied
+// limits without modifying the Context's defaults.
+func EvalWithLimits(ctx *Context, env *Env, expr Expr, limits ExecutionLimits) (Value, error) {
+	return rt.EvalWithLimits(ctx, env, expr, limits)
+}
+
 // EvalString ist eine praktische Kombination aus Parser + Eval,
 // die einen Quelltext direkt auswertet (Ausgabe wird getee'd).
 func EvalString(ctx *Context, src string) (EvalResult, error) {
 	return ctx.EvalString(src)
+}
+
+// EvalStringWithLimits evaluates source under the supplied limits without
+// modifying the Context's defaults.
+func EvalStringWithLimits(ctx *Context, src string, limits ExecutionLimits) (EvalResult, error) {
+	return ctx.EvalStringWithLimits(src, limits)
 }
