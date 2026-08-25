@@ -136,8 +136,8 @@ func TestExecutionStepLimitStopsRepeat(t *testing.T) {
 func TestDefaultExecutionLimitsStopRepeat(t *testing.T) {
 	ctx := NewContext()
 	limits := ctx.ExecutionLimits()
-	if limits.MaxSteps == 0 || limits.MaxCallDepth == 0 || limits.Timeout == 0 {
-		t.Fatalf("default execution limits must be enabled: %+v", limits)
+	if limits.MaxSteps != 2_000_000 || limits.MaxCallDepth != 2_000 || limits.Timeout != 4*time.Second {
+		t.Fatalf("unexpected default execution limits: %+v", limits)
 	}
 	_, err := ctx.EvalString(`repeat { x <- 1 }`)
 	if !errors.Is(err, ErrExecutionStepLimit) && !errors.Is(err, ErrExecutionTimeout) {
@@ -188,6 +188,18 @@ func TestEvalWithLimitsStopsRepeat(t *testing.T) {
 	_, err = EvalWithLimits(ctx, ctx.Global, prog.Exprs[0], ExecutionLimits{MaxSteps: 64})
 	if !errors.Is(err, ErrExecutionStepLimit) {
 		t.Fatalf("expected step-limit error through EvalWithLimits, got %v", err)
+	}
+}
+
+func TestEvalProgramWithLimitsStopsRepeat(t *testing.T) {
+	prog, err := parser.New(`repeat { x <- 1 }`).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	ctx := NewContextWithLimits(ExecutionLimits{MaxSteps: 64})
+	_, err = ctx.EvalProgram(prog)
+	if !errors.Is(err, ErrExecutionStepLimit) {
+		t.Fatalf("expected step-limit error through EvalProgram, got %v", err)
 	}
 }
 

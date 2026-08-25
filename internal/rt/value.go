@@ -121,7 +121,8 @@ func (v *LogicalVec) String() string {
 
 type IntVec struct {
 	Base
-	Data []IntElem
+	Data   []IntElem
+	scalar [1]IntElem
 }
 
 func (v *IntVec) Type() string { return "integer" }
@@ -138,7 +139,8 @@ func (v *IntVec) String() string {
 
 type DoubleVec struct {
 	Base
-	Data []FloatElem
+	Data   []FloatElem
+	scalar [1]FloatElem
 }
 
 func (v *DoubleVec) Type() string { return "double" }
@@ -315,11 +317,33 @@ func (c *ClosureFunc) Call(ctx *Context, caller *Env, args []ArgValue) (Value, e
 func LogicalScalar(v bool) *LogicalVec { return &LogicalVec{Data: []LogicalElem{{Val: v}}} }
 func LogicalNA() *LogicalVec           { return &LogicalVec{Data: []LogicalElem{{NA: true}}} }
 
-func IntScalar(v int64) *IntVec { return &IntVec{Data: []IntElem{{Val: v}}} }
-func IntNA() *IntVec            { return &IntVec{Data: []IntElem{{NA: true}}} }
+func IntScalar(v int64) *IntVec {
+	out := &IntVec{}
+	out.scalar[0] = IntElem{Val: v}
+	out.Data = out.scalar[:]
+	return out
+}
 
-func DoubleScalar(v float64) *DoubleVec { return &DoubleVec{Data: []FloatElem{{Val: v}}} }
-func DoubleNA() *DoubleVec              { return &DoubleVec{Data: []FloatElem{{NA: true}}} }
+func IntNA() *IntVec {
+	out := &IntVec{}
+	out.scalar[0] = IntElem{NA: true}
+	out.Data = out.scalar[:]
+	return out
+}
+
+func DoubleScalar(v float64) *DoubleVec {
+	out := &DoubleVec{}
+	out.scalar[0] = FloatElem{Val: v}
+	out.Data = out.scalar[:]
+	return out
+}
+
+func DoubleNA() *DoubleVec {
+	out := &DoubleVec{}
+	out.scalar[0] = FloatElem{NA: true}
+	out.Data = out.scalar[:]
+	return out
+}
 
 func CharScalar(v string) *CharVec { return &CharVec{Data: []StringElem{{Val: v}}} }
 func CharNA() *CharVec             { return &CharVec{Data: []StringElem{{NA: true}}} }

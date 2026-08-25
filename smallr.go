@@ -1,7 +1,9 @@
 package smallr
 
 import (
+	"container/list"
 	"io"
+	"sync"
 
 	"simonwaldherr.de/go/smallr/internal/ast"
 	"simonwaldherr.de/go/smallr/internal/lexer"
@@ -49,6 +51,79 @@ func ParseProgram(p *Parser) (*ast.Program, error) {
 	return p.ParseProgram()
 }
 
+// Compile parses src once into a reusable program. Reuse the returned program
+// with EvalProgram when the same script is evaluated repeatedly.
+func Compile(src string) (*ast.Program, error) {
+	return parser.New(src).ParseProgram()
+}
+
+// ProgramCache is a bounded, concurrency-safe LRU cache for compiled source.
+// It caches only valid programs; cache result values in the embedding
+// application, where all data dependencies can be included in the cache key.
+type ProgramCache struct {
+	mu       sync.Mutex
+	capacity int
+	entries  map[string]*list.Element
+	order    list.List
+}
+
+type programCacheEntry struct {
+	source  string
+	program *Program
+}
+
+// NewProgramCache creates a cache that retains up to capacity compiled
+// programs. A non-positive capacity disables retention while keeping the same
+// Compile API.
+func NewProgramCache(capacity int) *ProgramCache {
+	return &ProgramCache{
+		capacity: capacity,
+		entries:  make(map[string]*list.Element),
+	}
+}
+
+// Compile returns a cached program for src when available, otherwise parses
+// it and stores the successful result. Returned programs are safe to evaluate
+// concurrently with separate contexts; callers must not mutate the AST.
+func (c *ProgramCache) Compile(src string) (*Program, error) {
+	c.mu.Lock()
+	if entry, ok := c.entries[src]; ok {
+		c.order.MoveToFront(entry)
+		program := entry.Value.(*programCacheEntry).program
+		c.mu.Unlock()
+		return program, nil
+	}
+	c.mu.Unlock()
+
+	program, err := Compile(src)
+	if err != nil || c.capacity <= 0 {
+		return program, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Another goroutine may have compiled the same program while parsing ran.
+	if entry, ok := c.entries[src]; ok {
+		c.order.MoveToFront(entry)
+		return entry.Value.(*programCacheEntry).program, nil
+	}
+	entry := c.order.PushFront(&programCacheEntry{source: src, program: program})
+	c.entries[src] = entry
+	if c.order.Len() > c.capacity {
+		last := c.order.Back()
+		delete(c.entries, last.Value.(*programCacheEntry).source)
+		c.order.Remove(last)
+	}
+	return program, nil
+}
+
+// Len reports the number of programs currently retained in the cache.
+func (c *ProgramCache) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.order.Len()
+}
+
 // Program und Expr sind Aliase für die AST-Typen
 type Program = ast.Program
 type Expr = ast.Expr
@@ -61,6 +136,12 @@ func NewContext() *Context { return rt.NewContext() }
 
 // NewContextWithOutput erstellt einen Kontext mit einem benutzerdefinierten Writer.
 func NewContextWithOutput(w io.Writer) *Context { return rt.NewContextWithOutput(w) }
+
+// NewContextWithLimits erstellt einen Kontext mit einer passenden
+// Standard-Ausführungsrichtlinie für eingebetteten Code.
+func NewContextWithLimits(limits ExecutionLimits) *Context {
+	return rt.NewContextWithLimits(limits)
+}
 
 // EvalResult ist ein Alias für internal/rt.EvalResult
 type EvalResult = rt.EvalResult
@@ -101,4 +182,16 @@ func EvalString(ctx *Context, src string) (EvalResult, error) {
 // modifying the Context's defaults.
 func EvalStringWithLimits(ctx *Context, src string, limits ExecutionLimits) (EvalResult, error) {
 	return ctx.EvalStringWithLimits(src, limits)
+}
+
+// EvalProgram wertet ein vorab kompiliertes Programm mit den Standardlimits
+// des Contexts aus.
+func EvalProgram(ctx *Context, program *Program) (EvalResult, error) {
+	return ctx.EvalProgram(program)
+}
+
+// EvalProgramWithLimits wertet ein vorab kompiliertes Programm mit einer
+// Ausführungsrichtlinie nur für diesen Lauf aus.
+func EvalProgramWithLimits(ctx *Context, program *Program, limits ExecutionLimits) (EvalResult, error) {
+	return ctx.EvalProgramWithLimits(program, limits)
 }

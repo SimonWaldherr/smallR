@@ -1034,6 +1034,15 @@ func evalNumericBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
 		return &IntVec{Data: out}, nil
 	}
 
+	// Scalar arithmetic is a particularly hot path in loops. Handle native
+	// numeric scalars directly instead of converting both operands into
+	// temporary one-element double slices.
+	if af, ok := numericScalar(a); ok {
+		if bf, ok := numericScalar(b); ok {
+			return evalNumericScalar(op, af, bf)
+		}
+	}
+
 	// Integer sequences (for example 1:100000) are common in R programs. The
 	// general coercion path below turns both operands into temporary double
 	// vectors before producing the result. Avoid those full-size copies when
@@ -1085,6 +1094,59 @@ func evalNumericBinary(ctx *Context, op token.Type, a, b Value) (Value, error) {
 		}
 	}
 	return &DoubleVec{Data: out}, nil
+}
+
+// numericScalar returns a numeric scalar without allocating a coercion
+// vector. It deliberately accepts only the same vector types as asDoubleVec,
+// so the fast path preserves the general path's coercion rules.
+func numericScalar(v Value) (FloatElem, bool) {
+	switch x := v.(type) {
+	case *DoubleVec:
+		if len(x.Data) == 1 {
+			return x.Data[0], true
+		}
+	case *IntVec:
+		if len(x.Data) == 1 {
+			e := x.Data[0]
+			return FloatElem{Val: float64(e.Val), NA: e.NA}, true
+		}
+	case *LogicalVec:
+		if len(x.Data) == 1 {
+			e := x.Data[0]
+			if e.NA {
+				return FloatElem{NA: true}, true
+			}
+			if e.Val {
+				return FloatElem{Val: 1}, true
+			}
+			return FloatElem{}, true
+		}
+	}
+	return FloatElem{}, false
+}
+
+func evalNumericScalar(op token.Type, a, b FloatElem) (Value, error) {
+	if a.NA || b.NA {
+		return DoubleNA(), nil
+	}
+	switch op {
+	case token.PLUS:
+		return DoubleScalar(a.Val + b.Val), nil
+	case token.MINUS:
+		return DoubleScalar(a.Val - b.Val), nil
+	case token.STAR:
+		return DoubleScalar(a.Val * b.Val), nil
+	case token.SLASH:
+		return DoubleScalar(a.Val / b.Val), nil
+	case token.CARET:
+		return DoubleScalar(math.Pow(a.Val, b.Val)), nil
+	case token.MOD:
+		return DoubleScalar(math.Mod(a.Val, b.Val)), nil
+	case token.INTDIV:
+		return DoubleScalar(math.Floor(a.Val / b.Val)), nil
+	default:
+		return nil, fmt.Errorf("unsupported numeric op %s", op)
+	}
 }
 
 // evalIntNumericBinary is the integer-vector counterpart of the general

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"simonwaldherr.de/go/smallr/internal/ast"
 	"simonwaldherr.de/go/smallr/internal/parser"
 )
 
@@ -32,11 +33,11 @@ type ExecutionLimits struct {
 // DefaultExecutionLimits make the standard Context safe for interactive and
 // embedded use while still leaving ample room for ordinary analyses.
 var DefaultExecutionLimits = ExecutionLimits{
-	MaxSteps: 1_000_000,
+	MaxSteps: 2_000_000,
 	// A separate call-depth cap prevents recursive code from exhausting the Go
 	// stack before it reaches the step limit.
-	MaxCallDepth: 1_000,
-	Timeout:      2 * time.Second,
+	MaxCallDepth: 2_000,
+	Timeout:      4 * time.Second,
 }
 
 var (
@@ -65,6 +66,15 @@ func NewContext() *Context {
 func NewContextWithOutput(w io.Writer) *Context {
 	ctx := NewContext()
 	ctx.Output = w
+	return ctx
+}
+
+// NewContextWithLimits creates a context with a caller-defined default policy.
+// It is useful for embedded, user-supplied code where the general-purpose
+// defaults may be more generous than the request budget.
+func NewContextWithLimits(limits ExecutionLimits) *Context {
+	ctx := NewContext()
+	ctx.limits = limits
 	return ctx
 }
 
@@ -104,6 +114,36 @@ func (ctx *Context) EvalStringWithLimits(src string, limits ExecutionLimits) (Ev
 }
 
 func (ctx *Context) evalString(src string, limits ExecutionLimits) (EvalResult, error) {
+	p := parser.New(src)
+	prog, err := p.ParseProgram()
+	if err != nil {
+		return EvalResult{}, err
+	}
+	return ctx.evalProgram(prog, limits)
+}
+
+// EvalProgram evaluates a compiled program with this Context's default
+// limits. A program can be compiled once and reused across evaluations and
+// contexts to avoid parsing the same source repeatedly.
+func (ctx *Context) EvalProgram(prog *ast.Program) (EvalResult, error) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	return ctx.evalProgram(prog, ctx.limits)
+}
+
+// EvalProgramWithLimits evaluates a compiled program under a caller-supplied
+// policy without modifying the Context's defaults.
+func (ctx *Context) EvalProgramWithLimits(prog *ast.Program, limits ExecutionLimits) (EvalResult, error) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	return ctx.evalProgram(prog, limits)
+}
+
+func (ctx *Context) evalProgram(prog *ast.Program, limits ExecutionLimits) (EvalResult, error) {
+	if prog == nil {
+		return EvalResult{}, errors.New("smallr: cannot evaluate a nil program")
+	}
+
 	ctx.beginExecution(limits)
 	defer ctx.endExecution()
 
@@ -113,11 +153,6 @@ func (ctx *Context) evalString(src string, limits ExecutionLimits) (EvalResult, 
 	ctx.Output = &buf
 	defer func() { ctx.Output = out }()
 
-	p := parser.New(src)
-	prog, err := p.ParseProgram()
-	if err != nil {
-		return EvalResult{}, err
-	}
 	env := ctx.Global
 	var last Value = NullValue
 	for _, e := range prog.Exprs {

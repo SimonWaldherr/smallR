@@ -35,8 +35,8 @@ go run ./cmd/smallr
 
 ## Safe embedding
 
-Every evaluation has safe defaults: at most 1,000,000 AST steps, 1,000 nested
-function calls, and two seconds of wall-clock time. This stops endless
+Every evaluation has safe defaults: at most 2,000,000 AST steps, 2,000 nested
+function calls, and four seconds of wall-clock time. This stops endless
 `while`/`repeat` loops and runaway recursion. Limit errors can be matched with
 `errors.Is`.
 
@@ -60,6 +60,34 @@ if errors.Is(err, smallr.ErrExecutionStepLimit) ||
 `Context` serializes its public evaluation calls. Do not mutate its public
 `Global` or `Output` fields while an evaluation is active. Use a separate
 context when evaluations should run in parallel or need isolated variables.
+
+### Fast repeated embedding
+
+Parse stable scripts once with `Compile`, then reuse the resulting program.
+This skips lexing and parsing on every request; create one context per
+concurrent or isolated request, and set a narrow budget for user input.
+
+```go
+program, err := smallr.Compile(`sum(values) / length(values)`)
+if err != nil { /* reject invalid script */ }
+
+limits := smallr.ExecutionLimits{
+    MaxSteps: 50_000, MaxCallDepth: 100, Timeout: 250 * time.Millisecond,
+}
+ctx := smallr.NewContextWithLimits(limits)
+// Set values in ctx.Global, then reuse program for later requests.
+result, err := smallr.EvalProgram(ctx, program)
+```
+
+For many distinct scripts, use a bounded cache:
+
+```go
+scripts := smallr.NewProgramCache(256)
+program, err := scripts.Compile(userRule)
+```
+
+`ProgramCache` caches only valid, compiled programs by source. Cache result
+values only when the script and all input data are part of the cache key.
 
 ## WebAssembly build
 
