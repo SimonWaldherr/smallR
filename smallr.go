@@ -64,12 +64,29 @@ type ProgramCache struct {
 	mu       sync.Mutex
 	capacity int
 	entries  map[string]*list.Element
+	inflight map[string]*programCacheCall
 	order    list.List
+	stats    ProgramCacheStats
 }
 
 type programCacheEntry struct {
 	source  string
 	program *Program
+}
+
+type programCacheCall struct {
+	done    chan struct{}
+	program *Program
+	err     error
+}
+
+// ProgramCacheStats describes cache activity since construction or Clear.
+// A waiter is a concurrent caller that reused an in-progress compilation.
+type ProgramCacheStats struct {
+	Hits      uint64
+	Misses    uint64
+	Waiters   uint64
+	Evictions uint64
 }
 
 // NewProgramCache creates a cache that retains up to capacity compiled
@@ -79,6 +96,7 @@ func NewProgramCache(capacity int) *ProgramCache {
 	return &ProgramCache{
 		capacity: capacity,
 		entries:  make(map[string]*list.Element),
+		inflight: make(map[string]*programCacheCall),
 	}
 }
 
@@ -89,32 +107,41 @@ func (c *ProgramCache) Compile(src string) (*Program, error) {
 	c.mu.Lock()
 	if entry, ok := c.entries[src]; ok {
 		c.order.MoveToFront(entry)
+		c.stats.Hits++
 		program := entry.Value.(*programCacheEntry).program
 		c.mu.Unlock()
 		return program, nil
 	}
+	if call, ok := c.inflight[src]; ok {
+		c.stats.Waiters++
+		c.mu.Unlock()
+		<-call.done
+		return call.program, call.err
+	}
+	call := &programCacheCall{done: make(chan struct{})}
+	c.inflight[src] = call
+	c.stats.Misses++
 	c.mu.Unlock()
 
 	program, err := Compile(src)
-	if err != nil || c.capacity <= 0 {
-		return program, err
-	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Another goroutine may have compiled the same program while parsing ran.
-	if entry, ok := c.entries[src]; ok {
-		c.order.MoveToFront(entry)
-		return entry.Value.(*programCacheEntry).program, nil
+	if err == nil && c.capacity > 0 {
+		entry := c.order.PushFront(&programCacheEntry{source: src, program: program})
+		c.entries[src] = entry
+		if c.order.Len() > c.capacity {
+			last := c.order.Back()
+			delete(c.entries, last.Value.(*programCacheEntry).source)
+			c.order.Remove(last)
+			c.stats.Evictions++
+		}
 	}
-	entry := c.order.PushFront(&programCacheEntry{source: src, program: program})
-	c.entries[src] = entry
-	if c.order.Len() > c.capacity {
-		last := c.order.Back()
-		delete(c.entries, last.Value.(*programCacheEntry).source)
-		c.order.Remove(last)
-	}
-	return program, nil
+	delete(c.inflight, src)
+	call.program = program
+	call.err = err
+	close(call.done)
+	c.mu.Unlock()
+	return program, err
 }
 
 // Len reports the number of programs currently retained in the cache.
@@ -122,6 +149,23 @@ func (c *ProgramCache) Len() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.order.Len()
+}
+
+// Stats returns a consistent snapshot of cache activity.
+func (c *ProgramCache) Stats() ProgramCacheStats {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stats
+}
+
+// Clear removes retained programs and resets the cache statistics. Ongoing
+// compilations are allowed to finish and may populate the cache afterwards.
+func (c *ProgramCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]*list.Element)
+	c.order.Init()
+	c.stats = ProgramCacheStats{}
 }
 
 // Program und Expr sind Aliase für die AST-Typen

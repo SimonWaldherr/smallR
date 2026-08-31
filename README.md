@@ -88,6 +88,8 @@ program, err := scripts.Compile(userRule)
 
 `ProgramCache` caches only valid, compiled programs by source. Cache result
 values only when the script and all input data are part of the cache key.
+Concurrent cache misses for the same source are coalesced into one parse;
+`Stats` exposes hits, misses, waiters, and evictions for monitoring.
 
 ## WebAssembly build
 

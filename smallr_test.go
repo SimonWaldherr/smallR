@@ -72,6 +72,14 @@ func TestProgramCacheCachesAndEvictsPrograms(t *testing.T) {
 	if got := cache.Len(); got != 2 {
 		t.Fatalf("expected cache capacity of 2, got %d", got)
 	}
+	stats := cache.Stats()
+	if stats.Hits != 1 || stats.Misses != 3 || stats.Evictions != 1 {
+		t.Fatalf("unexpected cache stats: %+v", stats)
+	}
+	cache.Clear()
+	if cache.Len() != 0 || cache.Stats() != (ProgramCacheStats{}) {
+		t.Fatalf("expected cleared cache and stats, got len=%d stats=%+v", cache.Len(), cache.Stats())
+	}
 }
 
 func TestProgramCacheConcurrentCompile(t *testing.T) {
@@ -107,5 +115,9 @@ func TestProgramCacheConcurrentCompile(t *testing.T) {
 		if program != first {
 			t.Fatal("expected concurrent callers to receive the cached program")
 		}
+	}
+	stats := cache.Stats()
+	if stats.Misses != 1 || stats.Waiters+stats.Hits != workers-1 {
+		t.Fatalf("expected one compilation and %d reused callers, got %+v", workers-1, stats)
 	}
 }
