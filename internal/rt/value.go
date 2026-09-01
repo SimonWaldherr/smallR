@@ -317,6 +317,14 @@ func (c *ClosureFunc) Call(ctx *Context, caller *Env, args []ArgValue) (Value, e
 func LogicalScalar(v bool) *LogicalVec { return &LogicalVec{Data: []LogicalElem{{Val: v}}} }
 func LogicalNA() *LogicalVec           { return &LogicalVec{Data: []LogicalElem{{NA: true}}} }
 
+func Logical(values ...bool) *LogicalVec {
+	data := make([]LogicalElem, len(values))
+	for i, value := range values {
+		data[i] = LogicalElem{Val: value}
+	}
+	return &LogicalVec{Data: data}
+}
+
 func IntScalar(v int64) *IntVec {
 	out := &IntVec{}
 	out.scalar[0] = IntElem{Val: v}
@@ -329,6 +337,14 @@ func IntNA() *IntVec {
 	out.scalar[0] = IntElem{NA: true}
 	out.Data = out.scalar[:]
 	return out
+}
+
+func Integers(values ...int64) *IntVec {
+	data := make([]IntElem, len(values))
+	for i, value := range values {
+		data[i] = IntElem{Val: value}
+	}
+	return &IntVec{Data: data}
 }
 
 func DoubleScalar(v float64) *DoubleVec {
@@ -345,8 +361,24 @@ func DoubleNA() *DoubleVec {
 	return out
 }
 
+func Doubles(values ...float64) *DoubleVec {
+	data := make([]FloatElem, len(values))
+	for i, value := range values {
+		data[i] = FloatElem{Val: value}
+	}
+	return &DoubleVec{Data: data}
+}
+
 func CharScalar(v string) *CharVec { return &CharVec{Data: []StringElem{{Val: v}}} }
 func CharNA() *CharVec             { return &CharVec{Data: []StringElem{{NA: true}}} }
+
+func Chars(values ...string) *CharVec {
+	data := make([]StringElem, len(values))
+	for i, value := range values {
+		data[i] = StringElem{Val: value}
+	}
+	return &CharVec{Data: data}
+}
 
 func List(values ...Value) *ListVec { return &ListVec{Data: values} }
 

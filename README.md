@@ -91,6 +91,51 @@ values only when the script and all input data are part of the cache key.
 Concurrent cache misses for the same source are coalesced into one parse;
 `Stats` exposes hits, misses, waiters, and evictions for monitoring.
 
+### Integration into another Go tool
+
+For a service, plugin, or command that evaluates independent requests, use an
+`Engine`. It has a bounded source cache, reuses contexts internally, and gives
+every call a fresh global environment. This makes it safe to share one engine
+between HTTP handlers or worker goroutines.
+
+```go
+package rules
+
+import (
+    "errors"
+    "time"
+
+    smallr "simonwaldherr.de/go/smallr"
+)
+
+var engine = smallr.NewEngine(smallr.ExecutionLimits{
+    MaxSteps: 50_000, MaxCallDepth: 100, Timeout: 250 * time.Millisecond,
+}, 256)
+
+func Score(rule string, values []float64) (string, error) {
+    result, err := engine.Eval(rule, map[string]smallr.Value{
+        "values": smallr.Floats(values...),
+    })
+    if errors.Is(err, smallr.ErrExecutionStepLimit) ||
+        errors.Is(err, smallr.ErrExecutionCallDepth) ||
+        errors.Is(err, smallr.ErrExecutionTimeout) {
+        return "", errors.New("rule exceeded its execution budget")
+    }
+    if err != nil {
+        return "", err // parse error or normal smallR runtime error
+    }
+    return smallr.ToJSON(result.Value), nil
+}
+```
+
+`Logical`, `Ints`, `Floats`, `Chars`, and `List` convert Go inputs into
+smallR values. `ToJSON` turns a result into JSON for an HTTP, CLI, or
+JavaScript response; `NULL` and `NA` are represented as JSON `null`.
+
+Use `Engine` for isolated requests. Use a `Context` directly only when a
+deliberately stateful session is required (for example a REPL), and never
+share or mutate its `Global` environment during an active evaluation.
+
 ## WebAssembly build
 
 Build:

@@ -1,8 +1,10 @@
 package smallr
 
 import (
+	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestDebugTokens(t *testing.T) {
@@ -119,5 +121,65 @@ func TestProgramCacheConcurrentCompile(t *testing.T) {
 	stats := cache.Stats()
 	if stats.Misses != 1 || stats.Waiters+stats.Hits != workers-1 {
 		t.Fatalf("expected one compilation and %d reused callers, got %+v", workers-1, stats)
+	}
+}
+
+func TestEngineUsesIsolatedInputsAndContexts(t *testing.T) {
+	engine := NewEngine(ExecutionLimits{MaxSteps: 100, Timeout: time.Second}, 4)
+	res, err := engine.Eval("sum(values)", map[string]Value{
+		"values": Ints(1, 2, 3),
+	})
+	if err != nil {
+		t.Fatalf("first engine evaluation failed: %v", err)
+	}
+	if got := res.Value.String(); got != "6" {
+		t.Fatalf("expected 6, got %s", got)
+	}
+	if _, err := engine.Eval("values", nil); err == nil {
+		t.Fatal("expected input variable to be isolated between runs")
+	}
+	if _, err := engine.Eval("repeat { 1 }", nil); !errors.Is(err, ErrExecutionStepLimit) {
+		t.Fatalf("expected engine limits to stop repeat, got %v", err)
+	}
+	if stats := engine.ProgramCacheStats(); stats.Misses != 3 {
+		t.Fatalf("expected three cached program misses, got %+v", stats)
+	}
+}
+
+func TestEngineSupportsConcurrentEvaluations(t *testing.T) {
+	engine := NewEngine(ExecutionLimits{MaxSteps: 100, Timeout: time.Second}, 4)
+	const workers = 16
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func(value int64) {
+			defer wg.Done()
+			res, err := engine.Eval("sum(values)", map[string]Value{"values": Ints(value)})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if got, want := res.Value.String(), Int(value).String(); got != want {
+				errs <- errors.New("concurrent evaluation returned another request's value")
+			}
+		}(int64(i))
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
+func TestInputConstructorsAndJSON(t *testing.T) {
+	ctx := NewContext()
+	ctx.Global.SetLocal("values", Floats(1.5, 2.5))
+	res, err := EvalString(ctx, "sum(values)")
+	if err != nil {
+		t.Fatalf("evaluation failed: %v", err)
+	}
+	if got := ToJSON(res.Value); got != "4" {
+		t.Fatalf("expected JSON 4, got %s", got)
 	}
 }

@@ -168,6 +168,64 @@ func (c *ProgramCache) Clear() {
 	c.stats = ProgramCacheStats{}
 }
 
+// Engine provides isolated, concurrent-safe evaluations for embedding in
+// services. It reuses contexts internally and compiles source through its
+// bounded program cache.
+//
+// Values passed as inputs must not be mutated by the caller until Eval
+// returns. Engine itself does not retain the input map after evaluation.
+type Engine struct {
+	limits   ExecutionLimits
+	programs *ProgramCache
+	contexts sync.Pool
+}
+
+// NewEngine creates an isolated evaluator with a bounded source cache. The
+// supplied limits apply to every evaluation; choose explicit, tight limits
+// when source originates from users. A non-positive cache capacity disables
+// retention while still coalescing simultaneous compiles.
+func NewEngine(limits ExecutionLimits, programCacheCapacity int) *Engine {
+	e := &Engine{
+		limits:   limits,
+		programs: NewProgramCache(programCacheCapacity),
+	}
+	e.contexts.New = func() any { return NewContextWithLimits(limits) }
+	return e
+}
+
+// Eval compiles src through the engine's cache and evaluates it with isolated
+// input variables. It is safe to call concurrently.
+func (e *Engine) Eval(src string, inputs map[string]Value) (EvalResult, error) {
+	program, err := e.programs.Compile(src)
+	if err != nil {
+		return EvalResult{}, err
+	}
+	return e.EvalProgram(program, inputs)
+}
+
+// EvalProgram evaluates a precompiled program with isolated input variables.
+// It is safe to call concurrently.
+func (e *Engine) EvalProgram(program *Program, inputs map[string]Value) (EvalResult, error) {
+	ctx := e.contexts.Get().(*Context)
+	defer func() {
+		ctx.Reset()
+		e.contexts.Put(ctx)
+	}()
+	for name, value := range inputs {
+		ctx.Global.SetLocal(name, value)
+	}
+	return ctx.EvalProgram(program)
+}
+
+// Limits reports the fixed execution policy of this engine.
+func (e *Engine) Limits() ExecutionLimits { return e.limits }
+
+// ProgramCacheStats reports activity of the engine's program cache.
+func (e *Engine) ProgramCacheStats() ProgramCacheStats { return e.programs.Stats() }
+
+// ClearProgramCache removes compiled source retained by this engine.
+func (e *Engine) ClearProgramCache() { e.programs.Clear() }
+
 // Program und Expr sind Aliase für die AST-Typen
 type Program = ast.Program
 type Expr = ast.Expr
@@ -193,6 +251,48 @@ type EvalResult = rt.EvalResult
 // Env, Value sind Aliase für die entsprechenden Laufzeit-Typen
 type Env = rt.Env
 type Value = rt.Value
+
+// Concrete values and element types are exposed for integrations that need
+// direct access to a smallR result. Prefer the constructors below for inputs.
+type LogicalVec = rt.LogicalVec
+type IntVec = rt.IntVec
+type DoubleVec = rt.DoubleVec
+type CharVec = rt.CharVec
+type ListVec = rt.ListVec
+type LogicalElem = rt.LogicalElem
+type IntElem = rt.IntElem
+type FloatElem = rt.FloatElem
+type StringElem = rt.StringElem
+
+var NullValue Value = rt.NullValue
+
+// Logical creates a logical vector from Go booleans.
+func Logical(values ...bool) *LogicalVec { return rt.Logical(values...) }
+
+// Int creates a scalar integer value.
+func Int(value int64) *IntVec { return rt.IntScalar(value) }
+
+// Ints creates an integer vector from Go int64 values.
+func Ints(values ...int64) *IntVec { return rt.Integers(values...) }
+
+// Float creates a scalar double value.
+func Float(value float64) *DoubleVec { return rt.DoubleScalar(value) }
+
+// Floats creates a double vector from Go float64 values.
+func Floats(values ...float64) *DoubleVec { return rt.Doubles(values...) }
+
+// Char creates a scalar character value.
+func Char(value string) *CharVec { return rt.CharScalar(value) }
+
+// Chars creates a character vector from Go strings.
+func Chars(values ...string) *CharVec { return rt.Chars(values...) }
+
+// List creates a smallR list from existing values.
+func List(values ...Value) *ListVec { return rt.List(values...) }
+
+// ToJSON converts a smallR value to a JSON document suitable for HTTP or JS
+// responses. Missing values and NULL become JSON null.
+func ToJSON(value Value) string { return rt.ToJSON(value) }
 
 // Eval wertet einen AST-Knoten im gegebenen Kontext und Environment aus.
 func Eval(ctx *Context, env *Env, expr Expr) (Value, error) {

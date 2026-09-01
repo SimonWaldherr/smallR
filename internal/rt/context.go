@@ -99,6 +99,16 @@ func (ctx *Context) ExecutionLimits() ExecutionLimits {
 	return ctx.limits
 }
 
+// Reset removes all user-defined globals while retaining the Context's output
+// writer and default execution limits. It serializes with an active run.
+func (ctx *Context) Reset() {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.Global = NewEnv(nil)
+	InstallBuiltins(ctx.Global)
+	ctx.budget = executionBudget{}
+}
+
 func (ctx *Context) EvalString(src string) (EvalResult, error) {
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
